@@ -1,0 +1,122 @@
+@page "/job"
+@page "/job/{JobId:guid}"
+@implements IDisposable
+@inject HttpClient Http
+
+<h1>Job status</h1>
+<ManualJobSearch />
+
+@if (JobId is null)
+{
+    <p>Enter a job ID above to view status and results.</p>
+}
+else if (!string.IsNullOrWhiteSpace(error))
+{
+    <div class="alert error">@error</div>
+}
+else if (status is null)
+{
+    <p>Loading job...</p>
+}
+else
+{
+    <section class="card">
+        <h2>@status.Status</h2>
+        <p><strong>Job ID:</strong> <code>@status.JobId</code></p>
+        <p><strong>Created:</strong> @status.CreatedAtUtc.ToLocalTime()</p>
+        @if (status.StartedAtUtc is not null) { <p><strong>Started:</strong> @status.StartedAtUtc.Value.ToLocalTime()</p> }
+        @if (status.CompletedAtUtc is not null) { <p><strong>Finished:</strong> @status.CompletedAtUtc.Value.ToLocalTime()</p> }
+        @if (!string.IsNullOrWhiteSpace(status.ErrorMessage)) { <div class="alert error">@status.ErrorMessage</div> }
+    </section>
+
+    @if (result is not null)
+    {
+        <section class="card">
+            <h2>Analysis</h2>
+            <div class="sentiment @result.OverallSentiment">@result.OverallSentiment</div>
+            <p>@result.OverallSummary</p>
+        </section>
+
+        <section class="grid">
+            @foreach (var theme in result.TopThemes)
+            {
+                <article class="card theme-card">
+                    <h3>@theme.Theme</h3>
+                    <span class="sentiment @theme.Sentiment">@theme.Sentiment</span>
+                    <p>@theme.Summary</p>
+                    <p><strong>Evidence:</strong> @string.Join(", ", theme.FeedbackIds)</p>
+                </article>
+            }
+        </section>
+
+        <section class="card">
+            <h2>Recommended actions</h2>
+            <ul>
+                @foreach (var action in result.RecommendedActions)
+                {
+                    <li>@action.Action</li>
+                }
+            </ul>
+            @if (!string.IsNullOrWhiteSpace(result.UncertaintyNote))
+            {
+                <p class="note"><strong>Limitations:</strong> @result.UncertaintyNote</p>
+            }
+        </section>
+    }
+}
+
+@code {
+    [Parameter] public Guid? JobId { get; set; }
+    private JobStatusResponse? status;
+    private JobResultResponse? result;
+    private string? error;
+    private PeriodicTimer? timer;
+    private CancellationTokenSource cts = new();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadAsync();
+        if (JobId is not null && status?.Status is "queued" or "running")
+        {
+            timer?.Dispose();
+            timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
+            _ = PollAsync();
+        }
+    }
+
+    private async Task PollAsync()
+    {
+        if (timer is null) return;
+        while (await timer.WaitForNextTickAsync(cts.Token))
+        {
+            await LoadAsync();
+            await InvokeAsync(StateHasChanged);
+            if (status?.Status is "completed" or "failed") break;
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        if (JobId is null) return;
+        error = null;
+        try
+        {
+            status = await Http.GetFromJsonAsync<JobStatusResponse>($"jobs/{JobId}", cts.Token);
+            if (status?.Status == "completed")
+            {
+                result = await Http.GetFromJsonAsync<JobResultResponse>($"jobs/{JobId}/result", cts.Token);
+            }
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    public void Dispose()
+    {
+        cts.Cancel();
+        cts.Dispose();
+        timer?.Dispose();
+    }
+}
