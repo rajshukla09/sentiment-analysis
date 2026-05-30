@@ -1,0 +1,29 @@
+@inject NavigationManager Navigation
+
+<section class="card compact">
+    <h2>Find an existing job</h2>
+    <div class="search-row">
+        <input @bind="jobId" placeholder="Paste job ID" />
+        <button @onclick="Go">Open</button>
+    </div>
+    @if (!string.IsNullOrWhiteSpace(error))
+    {
+        <div class="alert error">@error</div>
+    }
+</section>
+
+@code {
+    private string? jobId;
+    private string? error;
+
+    private void Go()
+    {
+        if (!Guid.TryParse(jobId, out var id))
+        {
+            error = "Enter a valid GUID job ID.";
+            return;
+        }
+
+        Navigation.NavigateTo($"job/{id}");
+    }
+}

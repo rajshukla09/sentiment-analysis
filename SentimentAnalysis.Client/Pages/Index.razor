@@ -1,0 +1,87 @@
+@page "/"
+@inject HttpClient Http
+@inject NavigationManager Navigation
+
+<h1>Upload consumer feedback PDF</h1>
+<p class="lede">Upload a text-based PDF containing Feedback ID / Comment blocks. The API queues analysis immediately and processes it in the background.</p>
+
+<section class="card">
+    <InputFile OnChange="OnFileSelected" accept="application/pdf,.pdf" />
+    <button class="primary" @onclick="UploadAsync" disabled="@(selectedFile is null || isUploading)">@(isUploading ? "Uploading..." : "Create analysis job")</button>
+
+    @if (!string.IsNullOrWhiteSpace(error))
+    {
+        <div class="alert error">@error</div>
+    }
+
+    @if (createdJobId is not null)
+    {
+        <div class="alert success">
+            Job created: <code>@createdJobId</code>
+            <button @onclick="ViewStatus">View status</button>
+        </div>
+    }
+</section>
+
+<ManualJobSearch />
+
+@code {
+    private IBrowserFile? selectedFile;
+    private bool isUploading;
+    private string? error;
+    private Guid? createdJobId;
+
+    private void OnFileSelected(InputFileChangeEventArgs args)
+    {
+        error = null;
+        createdJobId = null;
+        selectedFile = args.File;
+        if (selectedFile.Size > 2 * 1024 * 1024)
+        {
+            error = "PDF uploads must be 2 MB or smaller.";
+            selectedFile = null;
+        }
+    }
+
+    private void ViewStatus()
+    {
+        if (createdJobId is not null)
+        {
+            Navigation.NavigateTo($"job/{createdJobId}");
+        }
+    }
+
+    private async Task UploadAsync()
+    {
+        if (selectedFile is null) return;
+        isUploading = true;
+        error = null;
+        createdJobId = null;
+        try
+        {
+            using var form = new MultipartFormDataContent();
+            await using var stream = selectedFile.OpenReadStream(2 * 1024 * 1024);
+            using var content = new StreamContent(stream);
+            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/pdf");
+            form.Add(content, "file", selectedFile.Name);
+            var response = await Http.PostAsync("jobs", form);
+            if (!response.IsSuccessStatusCode)
+            {
+                var apiError = await response.Content.ReadFromJsonAsync<ApiErrorResponse>();
+                error = apiError?.Error ?? $"Upload failed with HTTP {(int)response.StatusCode}.";
+                return;
+            }
+
+            var created = await response.Content.ReadFromJsonAsync<CreateJobResponse>();
+            createdJobId = created?.JobId;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            isUploading = false;
+        }
+    }
+}
