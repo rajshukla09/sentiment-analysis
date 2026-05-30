@@ -361,3 +361,9 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# Consumer sentiment local persistence
+App_Data/
+*.db
+*.db-shm
+*.db-wal
