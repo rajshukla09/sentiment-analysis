@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -188,7 +189,7 @@ internal sealed class TestApplicationFactory(bool analyzerThrows = false) : WebA
     {
         builder.UseSetting("ConnectionStrings:DefaultConnection", $"Data Source={databasePath}");
         builder.UseSetting("Storage:UploadsPath", uploadsPath);
-        builder.ConfigureServices(services =>
+        builder.ConfigureTestServices(services =>
         {
             services.RemoveAll<IHostedService>();
             services.RemoveAll<IPdfTextExtractor>();

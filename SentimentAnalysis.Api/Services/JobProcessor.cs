@@ -17,19 +17,30 @@ public sealed class JobProcessor(
 
     public async Task<bool> ProcessNextQueuedJobAsync(CancellationToken cancellationToken)
     {
-        var job = await db.Jobs
+        var queuedJob = await db.Jobs
+            .AsNoTracking()
             .Where(x => x.Status == JobStatuses.Queued)
             .OrderBy(x => x.CreatedAtUtc)
             .FirstOrDefaultAsync(cancellationToken);
 
-        if (job is null)
+        if (queuedJob is null)
         {
             return false;
         }
 
-        job.Status = JobStatuses.Running;
-        job.StartedAtUtc = DateTime.UtcNow;
-        await db.SaveChangesAsync(cancellationToken);
+        var startedAt = DateTime.UtcNow;
+        var claimed = await db.Jobs
+            .Where(x => x.Id == queuedJob.Id && x.Status == JobStatuses.Queued)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(x => x.Status, JobStatuses.Running)
+                .SetProperty(x => x.StartedAtUtc, startedAt), cancellationToken);
+
+        if (claimed == 0)
+        {
+            return true;
+        }
+
+        var job = await db.Jobs.FirstAsync(x => x.Id == queuedJob.Id, cancellationToken);
 
         try
         {
@@ -55,10 +66,17 @@ public sealed class JobProcessor(
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Job {JobId} failed", job.Id);
-            job.Status = JobStatuses.Failed;
-            job.CompletedAtUtc = DateTime.UtcNow;
-            job.ErrorMessage = ex.Message.Length > 2000 ? ex.Message[..2000] : ex.Message;
-            await db.SaveChangesAsync(CancellationToken.None);
+            db.ChangeTracker.Clear();
+
+            var errorMessage = ex.Message.Length > 2000 ? ex.Message[..2000] : ex.Message;
+            var completedAt = DateTime.UtcNow;
+            await db.Jobs
+                .Where(x => x.Id == job.Id)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(x => x.Status, JobStatuses.Failed)
+                    .SetProperty(x => x.CompletedAtUtc, completedAt)
+                    .SetProperty(x => x.ErrorMessage, errorMessage), CancellationToken.None);
+
             return true;
         }
     }
