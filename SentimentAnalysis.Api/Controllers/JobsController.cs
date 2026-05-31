@@ -23,7 +23,7 @@ public sealed class JobsController(AppDbContext db, IFileStorageService storage)
     [Consumes("multipart/form-data")]
     [ProducesResponseType(typeof(CreateJobResponse), StatusCodes.Status202Accepted)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
-    public async Task<ActionResult<CreateJobResponse>> CreateJob([FromForm] IFormFile? file, CancellationToken cancellationToken)
+    public async Task<ActionResult<CreateJobResponse>> CreateJob(IFormFile? file, CancellationToken cancellationToken)
     {
         if (file is null || file.Length == 0)
         {

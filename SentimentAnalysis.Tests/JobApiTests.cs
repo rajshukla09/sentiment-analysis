@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -132,6 +134,19 @@ public sealed class JobApiTests
     }
 
     [Fact]
+    public async Task SwaggerJsonIsAvailable()
+    {
+        await using var factory = new TestApplicationFactory();
+        var client = factory.CreateClient();
+
+        var response = await client.GetAsync("/swagger/v1/swagger.json");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var swagger = await response.Content.ReadAsStringAsync();
+        Assert.Contains("Sentiment Analysis API", swagger);
+    }
+
+    [Fact]
     public async Task ResultEndpointReturnsAcceptedWhenJobIsNotCompleted()
     {
         await using var factory = new TestApplicationFactory();
@@ -174,7 +189,7 @@ internal sealed class TestApplicationFactory(bool analyzerThrows = false) : WebA
     {
         builder.UseSetting("ConnectionStrings:DefaultConnection", $"Data Source={databasePath}");
         builder.UseSetting("Storage:UploadsPath", uploadsPath);
-        builder.ConfigureServices(services =>
+        builder.ConfigureTestServices(services =>
         {
             services.RemoveAll<IHostedService>();
             services.RemoveAll<IPdfTextExtractor>();
@@ -186,18 +201,71 @@ internal sealed class TestApplicationFactory(bool analyzerThrows = false) : WebA
 
     public async Task ProcessAllQueuedJobsAsync()
     {
-        using var scope = Services.CreateScope();
-        var processor = scope.ServiceProvider.GetRequiredService<IJobProcessor>();
-        while (await processor.ProcessNextQueuedJobAsync(CancellationToken.None))
+        while (true)
         {
+            using var scope = Services.CreateScope();
+            var processor = scope.ServiceProvider.GetRequiredService<IJobProcessor>();
+            if (!await processor.ProcessNextQueuedJobAsync(CancellationToken.None))
+            {
+                return;
+            }
         }
     }
 
     public override async ValueTask DisposeAsync()
     {
         await base.DisposeAsync();
-        if (File.Exists(databasePath)) File.Delete(databasePath);
-        if (Directory.Exists(uploadsPath)) Directory.Delete(uploadsPath, recursive: true);
+        SqliteConnection.ClearAllPools();
+
+        DeleteFileIfExists(databasePath);
+        DeleteFileIfExists($"{databasePath}-shm");
+        DeleteFileIfExists($"{databasePath}-wal");
+        DeleteFileIfExists($"{databasePath}-journal");
+        DeleteDirectoryIfExists(uploadsPath);
+    }
+
+    private static void DeleteFileIfExists(string path)
+    {
+        RetryFileSystemCleanup(() =>
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        });
+    }
+
+    private static void DeleteDirectoryIfExists(string path)
+    {
+        RetryFileSystemCleanup(() =>
+        {
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, recursive: true);
+            }
+        });
+    }
+
+    private static void RetryFileSystemCleanup(Action cleanup)
+    {
+        const int maxAttempts = 5;
+
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            try
+            {
+                cleanup();
+                return;
+            }
+            catch (IOException) when (attempt < maxAttempts)
+            {
+                Thread.Sleep(TimeSpan.FromMilliseconds(50 * attempt));
+            }
+            catch (UnauthorizedAccessException) when (attempt < maxAttempts)
+            {
+                Thread.Sleep(TimeSpan.FromMilliseconds(50 * attempt));
+            }
+        }
     }
 }
 

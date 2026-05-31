@@ -1,9 +1,9 @@
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.OpenApi.Models;
 using SentimentAnalysis.Api.Data;
 using SentimentAnalysis.Api.Options;
 using SentimentAnalysis.Api.Services;
-using Swashbuckle.AspNetCore.SwaggerGen;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -33,6 +33,13 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
+    options.SwaggerDoc("v1", new OpenApiInfo
+    {
+        Title = "Sentiment Analysis API",
+        Version = "v1",
+        Description = "Uploads customer-feedback PDFs, tracks analysis jobs, and returns structured sentiment-analysis results."
+    });
+
     var xmlFile = $"{Assembly.GetExecutingAssembly().GetName().Name}.xml";
     var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
     if (File.Exists(xmlPath))
@@ -51,8 +58,14 @@ using (var scope = app.Services.CreateScope())
 
 app.UseCors("ClientCors");
 app.UseSwagger();
-app.UseSwaggerUI();
+app.UseSwaggerUI(options =>
+{
+    options.SwaggerEndpoint("/swagger/v1/swagger.json", "Sentiment Analysis API v1");
+    options.RoutePrefix = "swagger";
+});
 
+app.MapGet("/", () => Results.Redirect("/swagger"))
+    .ExcludeFromDescription();
 app.MapControllers();
 
 app.Run();
