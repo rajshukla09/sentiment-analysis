@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "SentimentAnalysis.Api": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "https://localhost:51995;http://localhost:51996"
+    }
+  }
+}
