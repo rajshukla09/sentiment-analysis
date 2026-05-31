@@ -201,10 +201,14 @@ internal sealed class TestApplicationFactory(bool analyzerThrows = false) : WebA
 
     public async Task ProcessAllQueuedJobsAsync()
     {
-        using var scope = Services.CreateScope();
-        var processor = scope.ServiceProvider.GetRequiredService<IJobProcessor>();
-        while (await processor.ProcessNextQueuedJobAsync(CancellationToken.None))
+        while (true)
         {
+            using var scope = Services.CreateScope();
+            var processor = scope.ServiceProvider.GetRequiredService<IJobProcessor>();
+            if (!await processor.ProcessNextQueuedJobAsync(CancellationToken.None))
+            {
+                return;
+            }
         }
     }
 

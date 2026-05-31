@@ -40,11 +40,9 @@ public sealed class JobProcessor(
             return true;
         }
 
-        var job = await db.Jobs.FirstAsync(x => x.Id == queuedJob.Id, cancellationToken);
-
         try
         {
-            var text = await pdfTextExtractor.ExtractTextAsync(job.StoredFilePath, cancellationToken);
+            var text = await pdfTextExtractor.ExtractTextAsync(queuedJob.StoredFilePath, cancellationToken);
             var feedback = feedbackParser.Parse(text);
             if (feedback.Count == 0)
             {
@@ -52,11 +50,17 @@ public sealed class JobProcessor(
             }
 
             var analysis = await sentimentAnalyzer.AnalyzeAsync(feedback, cancellationToken);
-            job.Result = BuildResult(job.Id, analysis);
-            job.Status = JobStatuses.Completed;
-            job.CompletedAtUtc = DateTime.UtcNow;
-            job.ErrorMessage = null;
+            db.JobResults.Add(BuildResult(queuedJob.Id, analysis));
             await db.SaveChangesAsync(cancellationToken);
+
+            var completedAt = DateTime.UtcNow;
+            await db.Jobs
+                .Where(x => x.Id == queuedJob.Id)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(x => x.Status, JobStatuses.Completed)
+                    .SetProperty(x => x.CompletedAtUtc, completedAt)
+                    .SetProperty(x => x.ErrorMessage, (string?)null), cancellationToken);
+
             return true;
         }
         catch (OperationCanceledException)
@@ -65,13 +69,13 @@ public sealed class JobProcessor(
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Job {JobId} failed", job.Id);
+            logger.LogWarning(ex, "Job {JobId} failed", queuedJob.Id);
             db.ChangeTracker.Clear();
 
             var errorMessage = ex.Message.Length > 2000 ? ex.Message[..2000] : ex.Message;
             var completedAt = DateTime.UtcNow;
             await db.Jobs
-                .Where(x => x.Id == job.Id)
+                .Where(x => x.Id == queuedJob.Id)
                 .ExecuteUpdateAsync(setters => setters
                     .SetProperty(x => x.Status, JobStatuses.Failed)
                     .SetProperty(x => x.CompletedAtUtc, completedAt)
