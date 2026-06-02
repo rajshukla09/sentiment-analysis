@@ -116,16 +116,18 @@ public sealed class JobsController(AppDbContext db, IFileStorageService storage)
     }
 
     /// <summary>
-    /// Lists recent analysis jobs so the client can show queued, processing, and processed uploads.
+    /// Lists recent analysis jobs so the client can show queued, running, completed, and failed uploads.
     /// </summary>
     [HttpGet]
     [ProducesResponseType(typeof(IReadOnlyList<JobSummaryResponse>), StatusCodes.Status200OK)]
-    public async Task<ActionResult<IReadOnlyList<JobSummaryResponse>>> ListJobs(CancellationToken cancellationToken)
+    public async Task<ActionResult<IReadOnlyList<JobSummaryResponse>>> ListJobs([FromQuery] int take = 10, CancellationToken cancellationToken = default)
     {
+        take = Math.Clamp(take, 1, 50);
+
         var jobs = await db.Jobs
             .AsNoTracking()
             .OrderByDescending(x => x.CreatedAtUtc)
-            .Take(50)
+            .Take(take)
             .Select(x => new JobSummaryResponse(
                 x.Id,
                 x.FileName,
