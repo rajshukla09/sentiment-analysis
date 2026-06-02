@@ -1,5 +1,7 @@
 namespace SentimentAnalysis.Shared;
 
+public sealed record FeedbackItem(string FeedbackId, string Comment);
+
 public sealed record CreateJobResponse(Guid JobId, string Status);
 
 public sealed record JobStatusResponse(

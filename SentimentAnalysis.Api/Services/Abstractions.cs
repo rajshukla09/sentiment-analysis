@@ -2,11 +2,9 @@ using SentimentAnalysis.Shared;
 
 namespace SentimentAnalysis.Api.Services;
 
-public sealed record FeedbackRecord(string FeedbackId, string Comment);
-
 public interface ISentimentAnalyzer
 {
-    Task<SentimentAnalysisDto> AnalyzeAsync(IReadOnlyList<FeedbackRecord> feedback, CancellationToken cancellationToken);
+    Task<SentimentAnalysisDto> AnalyzeAsync(IReadOnlyList<FeedbackItem> feedbackItems, CancellationToken cancellationToken);
 }
 
 public interface IPdfTextExtractor
@@ -16,7 +14,7 @@ public interface IPdfTextExtractor
 
 public interface IFeedbackParser
 {
-    IReadOnlyList<FeedbackRecord> Parse(string text);
+    IReadOnlyList<FeedbackItem> Parse(string extractedText);
 }
 
 public interface IJobProcessor

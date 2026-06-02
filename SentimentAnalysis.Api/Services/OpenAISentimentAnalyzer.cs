@@ -1,6 +1,5 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
-using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using SentimentAnalysis.Api.Options;
@@ -13,25 +12,37 @@ public sealed class OpenAISentimentAnalyzer(HttpClient httpClient, IOptions<Open
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly HashSet<string> AllowedSentiments = ["positive", "neutral", "mixed", "negative"];
 
-    public async Task<SentimentAnalysisDto> AnalyzeAsync(IReadOnlyList<FeedbackRecord> feedback, CancellationToken cancellationToken)
+    public async Task<SentimentAnalysisDto> AnalyzeAsync(IReadOnlyList<FeedbackItem> feedbackItems, CancellationToken cancellationToken)
     {
+        if (feedbackItems.Count == 0)
+        {
+            throw new InvalidOperationException("At least one parsed feedback item is required before sentiment analysis.");
+        }
+
         var apiKey = options.Value.ApiKey;
         if (string.IsNullOrWhiteSpace(apiKey))
         {
             throw new InvalidOperationException("OpenAI API key is not configured. Set OpenAI__ApiKey in the environment or user secrets.");
         }
 
+        var compactFeedbackJson = JsonSerializer.Serialize(
+            feedbackItems.Select(x => new { feedbackId = x.FeedbackId, comment = x.Comment }),
+            JsonOptions);
+
         using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/chat/completions");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
         request.Content = JsonContent.Create(new
         {
-            model = string.IsNullOrWhiteSpace(options.Value.Model) ? "gpt-4o-mini" : options.Value.Model,
-            temperature = 0.2,
+            model = "gpt-4o-mini",
+            temperature = 0.1,
             response_format = new { type = "json_object" },
             messages = new[]
             {
-                new { role = "system", content = "You analyze consumer feedback. Return strict JSON only with keys: overallSummary, overallSentiment, topThemes, recommendedActions, uncertaintyNote. overallSentiment and theme sentiment must be positive, neutral, mixed, or negative. topThemes must contain 3-7 items when evidence permits and include feedbackIds." },
-                new { role = "user", content = BuildPrompt(feedback) }
+                new
+                {
+                    role = "user",
+                    content = "Return strict JSON only with shape {\"overallSummary\":string,\"overallSentiment\":\"positive|neutral|mixed|negative\",\"topThemes\":[{\"theme\":string,\"sentiment\":\"positive|neutral|mixed|negative\",\"summary\":string,\"feedbackIds\":[string]}],\"recommendedActions\":[string],\"uncertaintyNote\":string}. Use only the provided feedback items. Cite feedback IDs exactly from the input; do not invent IDs. Feedback items: " + compactFeedbackJson
+                }
             }
         }, options: JsonOptions);
 
@@ -50,13 +61,14 @@ public sealed class OpenAISentimentAnalyzer(HttpClient httpClient, IOptions<Open
             throw new InvalidOperationException("OpenAI returned an empty analysis response.");
         }
 
-        return ParseAndValidate(content);
+        return ParseAndValidate(content, feedbackItems.Select(x => x.FeedbackId));
     }
 
-    public static SentimentAnalysisDto ParseAndValidate(string rawJson)
+    public static SentimentAnalysisDto ParseAndValidate(string rawJson, IEnumerable<string> validFeedbackIds)
     {
         try
         {
+            var validIds = validFeedbackIds.ToHashSet(StringComparer.Ordinal);
             var dto = JsonSerializer.Deserialize<OpenAIAnalysisResponse>(rawJson, JsonOptions)
                 ?? throw new JsonException("Analysis JSON was empty.");
 
@@ -71,28 +83,31 @@ public sealed class OpenAISentimentAnalyzer(HttpClient httpClient, IOptions<Open
                 if (string.IsNullOrWhiteSpace(t.Theme) || string.IsNullOrWhiteSpace(t.Summary)) throw new JsonException("Each theme requires theme and summary.");
                 if (!AllowedSentiments.Contains(t.Sentiment)) throw new JsonException("Theme sentiment is invalid.");
                 if (t.FeedbackIds is null || t.FeedbackIds.Count == 0) throw new JsonException("Each theme requires evidence feedbackIds.");
-                return new ThemeDto(t.Theme, t.Sentiment, t.Summary, t.FeedbackIds);
+
+                var sanitizedIds = t.FeedbackIds
+                    .Where(id => !string.IsNullOrWhiteSpace(id))
+                    .Select(id => id.Trim())
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+                var invalidIds = sanitizedIds.Where(id => !validIds.Contains(id)).ToArray();
+                if (invalidIds.Length > 0)
+                {
+                    throw new JsonException($"Theme '{t.Theme}' cited feedback IDs that were not in the parsed input: {string.Join(", ", invalidIds)}.");
+                }
+
+                if (sanitizedIds.Length == 0) throw new JsonException("Each theme requires evidence feedbackIds.");
+                return new ThemeDto(t.Theme.Trim(), t.Sentiment, t.Summary.Trim(), sanitizedIds);
             }).ToArray();
 
             var actions = dto.RecommendedActions.Where(a => !string.IsNullOrWhiteSpace(a)).Select(a => new RecommendedActionDto(a.Trim())).ToArray();
             if (actions.Length == 0) throw new JsonException("recommendedActions cannot be empty.");
 
-            return new SentimentAnalysisDto(dto.OverallSummary, dto.OverallSentiment, themes, actions, dto.UncertaintyNote);
+            return new SentimentAnalysisDto(dto.OverallSummary.Trim(), dto.OverallSentiment, themes, actions, dto.UncertaintyNote?.Trim());
         }
         catch (JsonException ex)
         {
             throw new InvalidOperationException($"OpenAI returned invalid JSON: {ex.Message}", ex);
         }
-    }
-
-    private static string BuildPrompt(IReadOnlyList<FeedbackRecord> feedback)
-    {
-        var builder = new StringBuilder("Analyze these feedback records. Keep summary concise. Records:\n");
-        foreach (var item in feedback)
-        {
-            builder.Append("- ").Append(item.FeedbackId).Append(": ").AppendLine(item.Comment.Length > 1200 ? item.Comment[..1200] : item.Comment);
-        }
-        return builder.ToString();
     }
 
     private sealed class OpenAIAnalysisResponse

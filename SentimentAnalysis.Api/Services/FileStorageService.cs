@@ -11,7 +11,7 @@ public sealed class FileStorageService(IOptions<StorageOptions> options, IWebHos
         Directory.CreateDirectory(uploadsPath);
 
         var originalName = Path.GetFileName(file.FileName);
-        var storedPath = Path.Combine(uploadsPath, $"{jobId:N}.pdf");
+        var storedPath = Path.Combine(uploadsPath, $"{jobId}.pdf");
         await using var output = File.Create(storedPath);
         await file.CopyToAsync(output, cancellationToken);
         return (originalName, storedPath);
