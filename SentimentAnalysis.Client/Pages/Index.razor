@@ -66,13 +66,13 @@
 </section>
 
 <section class="card">
-    <div class="section-heading">
+    <EditForm Model="@refreshJobsForm" OnSubmit="LoadRecentJobsAsync" class="section-heading">
         <div>
             <h2>Recent jobs</h2>
             <p class="note">Track which PDFs are queued, processing, processed, or failed.</p>
         </div>
-        <button type="button" @onclick="LoadRecentJobsAsync" disabled="@isLoadingJobs">@(isLoadingJobs ? "Refreshing..." : "Refresh")</button>
-    </div>
+        <button type="submit" disabled="@isLoadingJobs">@(isLoadingJobs ? "Refreshing..." : "Refresh")</button>
+    </EditForm>
 
     @if (!string.IsNullOrWhiteSpace(jobListError))
     {

@@ -14,6 +14,7 @@ public partial class Index : IDisposable
 
     private readonly List<IBrowserFile> selectedFiles = new();
     private readonly List<UploadRow> uploads = new();
+    private readonly RefreshJobsForm refreshJobsForm = new();
     private List<JobSummaryResponse> recentJobs = new();
     private bool isUploading;
     private bool isLoadingJobs;
@@ -213,6 +214,10 @@ public partial class Index : IDisposable
         cts.Cancel();
         cts.Dispose();
         timer?.Dispose();
+    }
+
+    private sealed class RefreshJobsForm
+    {
     }
 
     private sealed class UploadRow
