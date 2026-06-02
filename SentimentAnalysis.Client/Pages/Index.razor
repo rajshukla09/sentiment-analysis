@@ -107,7 +107,11 @@
                             <td><span class="status-pill @job.Status">@FriendlyStatus(job.Status)</span></td>
                             <td>@job.CreatedAtUtc.ToLocalTime()</td>
                             <td>@(job.CompletedAtUtc?.ToLocalTime().ToString() ?? "—")</td>
-                            <td><button type="button" @onclick="() => ViewStatus(job.JobId)">View</button></td>
+                            <td>
+                                <EditForm Model="@job" OnSubmit="@(() => ViewStatus(job.JobId))">
+                                    <button type="submit">View</button>
+                                </EditForm>
+                            </td>
                         </tr>
                         @if (!string.IsNullOrWhiteSpace(job.ErrorMessage))
                         {
