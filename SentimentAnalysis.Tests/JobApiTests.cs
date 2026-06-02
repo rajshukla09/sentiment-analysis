@@ -57,6 +57,18 @@ public sealed class JobApiTests
     }
 
     [Fact]
+    public void ParserSupportsFlattenedPdfExtractorText()
+    {
+        var items = new FeedbackParser().Parse("Sample Consumer Feedback Responses Feedback ID: fb_001 Comment: The delivery was fast and arrived earlier than expected. Feedback ID: fb_002 Comment: Customer support responded quickly, but my refund took longer than expected.");
+
+        Assert.Equal(2, items.Count);
+        Assert.Equal("fb_001", items[0].FeedbackId);
+        Assert.Equal("The delivery was fast and arrived earlier than expected.", items[0].Comment);
+        Assert.Equal("fb_002", items[1].FeedbackId);
+        Assert.Equal("Customer support responded quickly, but my refund took longer than expected.", items[1].Comment);
+    }
+
+    [Fact]
     public void ParserRejectsEmptyFeedbackText()
     {
         var error = Assert.Throws<InvalidOperationException>(() => new FeedbackParser().Parse("   "));
