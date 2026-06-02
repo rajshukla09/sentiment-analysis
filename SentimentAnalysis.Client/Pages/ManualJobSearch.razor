@@ -2,10 +2,12 @@
 
 <section class="card compact">
     <h2>Find an existing job</h2>
-    <div class="search-row">
-        <input @bind="jobId" placeholder="Paste job ID" />
-        <button type="button" @onclick="Go">Open</button>
-    </div>
+    <EditForm Model="@searchForm" OnSubmit="Go">
+        <div class="search-row">
+            <InputText @bind-Value="searchForm.JobId" @oninput="UpdateJobId" placeholder="Paste job ID" />
+            <button type="submit">View Job</button>
+        </div>
+    </EditForm>
     @if (!string.IsNullOrWhiteSpace(error))
     {
         <div class="alert error">@error</div>
@@ -13,17 +15,70 @@
 </section>
 
 @code {
-    private string? jobId;
+    private readonly SearchForm searchForm = new();
     private string? error;
+
+    private void UpdateJobId(ChangeEventArgs args)
+    {
+        searchForm.JobId = args.Value?.ToString();
+        error = null;
+    }
 
     private void Go()
     {
-        if (!Guid.TryParse(jobId, out var id))
+        var normalizedJobId = NormalizeJobId(searchForm.JobId);
+        if (normalizedJobId is null)
         {
             error = "Enter a valid GUID job ID.";
             return;
         }
 
-        Navigation.NavigateTo($"job/{id}");
+        searchForm.JobId = normalizedJobId;
+        error = null;
+        Navigation.NavigateTo($"jobs/{normalizedJobId}");
+    }
+
+    private static string? NormalizeJobId(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var compact = new string(value
+            .Select(NormalizeDash)
+            .Where(IsPotentialGuidCharacter)
+            .ToArray());
+
+        if (Guid.TryParse(compact, out var parsed))
+        {
+            return parsed.ToString("D");
+        }
+
+        var hexOnly = new string(compact.Where(Uri.IsHexDigit).ToArray());
+        for (var start = 0; start <= hexOnly.Length - 32; start++)
+        {
+            var candidate = hexOnly.Substring(start, 32);
+            if (Guid.TryParseExact(candidate, "N", out parsed))
+            {
+                return parsed.ToString("D");
+            }
+        }
+
+        return null;
+    }
+
+    private static char NormalizeDash(char value) => value switch
+    {
+        '\u2010' or '\u2011' or '\u2012' or '\u2013' or '\u2014' or '\u2212' => '-',
+        _ => value
+    };
+
+    private static bool IsPotentialGuidCharacter(char value) =>
+        value is '-' or '{' or '}' or '(' or ')' || Uri.IsHexDigit(value);
+
+    private sealed class SearchForm
+    {
+        public string? JobId { get; set; }
     }
 }

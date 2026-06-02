@@ -59,7 +59,7 @@ public partial class Index : IDisposable
         }
     }
 
-    private void ViewStatus(Guid jobId) => Navigation.NavigateTo($"job/{jobId}");
+    private void ViewStatus(Guid jobId) => Navigation.NavigateTo($"jobs/{jobId}");
 
     private async Task UploadAsync()
     {
@@ -68,7 +68,7 @@ public partial class Index : IDisposable
         error = null;
 
         var batchRows = selectedFiles
-            .Select(file => new UploadRow(file.Name, "uploading", DateTime.UtcNow))
+            .Select(file => new UploadRow(file.Name, "queued", DateTime.UtcNow))
             .ToList();
         uploads.InsertRange(0, batchRows);
 
@@ -164,7 +164,7 @@ public partial class Index : IDisposable
         jobListError = null;
         try
         {
-            recentJobs = await Http.GetFromJsonAsync<List<JobSummaryResponse>>("jobs", cts.Token) ?? new List<JobSummaryResponse>();
+            recentJobs = await Http.GetFromJsonAsync<List<JobSummaryResponse>>("jobs?take=10", cts.Token) ?? new List<JobSummaryResponse>();
         }
         catch (Exception ex)
         {
@@ -197,10 +197,9 @@ public partial class Index : IDisposable
 
     private static string FriendlyStatus(string status) => status switch
     {
-        "uploading" => "Uploading",
         "queued" => "Queued",
-        "running" => "Processing",
-        "completed" => "Processed",
+        "running" => "Running",
+        "completed" => "Completed",
         "failed" => "Failed",
         _ => status
     };
