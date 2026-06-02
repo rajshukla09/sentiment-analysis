@@ -11,8 +11,8 @@ public sealed class QueuedJobWorker(IServiceScopeFactory scopeFactory, ILogger<Q
             {
                 using var scope = scopeFactory.CreateScope();
                 var processor = scope.ServiceProvider.GetRequiredService<IJobProcessor>();
-                var processed = await processor.ProcessNextQueuedJobAsync(stoppingToken);
-                if (!processed)
+                var didProcessJob = await processor.ProcessNextQueuedJobAsync(stoppingToken);
+                if (!didProcessJob)
                 {
                     await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
                 }

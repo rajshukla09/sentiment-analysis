@@ -54,7 +54,7 @@
                             <td><span class="status-pill @upload.Status">@FriendlyStatus(upload.Status)</span></td>
                             <td>@if (upload.JobId is not null) { <code>@upload.JobId</code> } else { <span class="muted">Not created yet</span> }</td>
                             <td>@upload.UpdatedAt.ToLocalTime()</td>
-                            <td>@if (upload.JobId is not null) { <button type="button" @onclick="() => ViewStatus(upload.JobId.Value)">View</button> }</td>
+                            <td>@if (upload.JobId is not null) { <a href="@($"/jobs/{upload.JobId.Value}")">View</a> }</td>
                         </tr>
                         @if (!string.IsNullOrWhiteSpace(upload.ErrorMessage))
                         {
@@ -71,7 +71,7 @@
     <div class="section-heading">
         <div>
             <h2>Recent jobs</h2>
-            <p class="note">Track which PDFs are queued, processing, processed, or failed.</p>
+            <p class="note">Track which PDFs are queued, running, completed, or failed.</p>
         </div>
         <button type="button" @onclick="LoadRecentJobsAsync" disabled="@isLoadingJobs">@(isLoadingJobs ? "Refreshing..." : "Refresh")</button>
     </div>
@@ -90,6 +90,7 @@
             <table class="job-table">
                 <thead>
                     <tr>
+                        <th>Job ID</th>
                         <th>File</th>
                         <th>Status</th>
                         <th>Created</th>
@@ -101,6 +102,7 @@
                     @foreach (var job in recentJobs)
                     {
                         <tr>
+                            <td><code>@job.JobId</code></td>
                             <td>@job.FileName</td>
                             <td><span class="status-pill @job.Status">@FriendlyStatus(job.Status)</span></td>
                             <td>@job.CreatedAtUtc.ToLocalTime()</td>
@@ -109,7 +111,7 @@
                         </tr>
                         @if (!string.IsNullOrWhiteSpace(job.ErrorMessage))
                         {
-                            <tr class="error-row"><td colspan="5">@job.ErrorMessage</td></tr>
+                            <tr class="error-row"><td colspan="6">@job.ErrorMessage</td></tr>
                         }
                     }
                 </tbody>
