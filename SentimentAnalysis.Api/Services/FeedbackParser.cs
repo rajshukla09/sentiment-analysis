@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using SentimentAnalysis.Shared;
 
 namespace SentimentAnalysis.Api.Services;
 
@@ -6,35 +7,47 @@ public sealed partial class FeedbackParser : IFeedbackParser
 {
     private const int MaxFeedbackItems = 50;
 
-    public IReadOnlyList<FeedbackRecord> Parse(string text)
+    public IReadOnlyList<FeedbackItem> Parse(string extractedText)
     {
-        if (string.IsNullOrWhiteSpace(text))
+        if (string.IsNullOrWhiteSpace(extractedText))
         {
-            return [];
+            throw new InvalidOperationException("No readable feedback text found in the PDF.");
         }
 
-        var normalized = text.Replace("\r\n", "\n").Replace('\r', '\n');
+        var normalized = extractedText.Replace("\r\n", "\n").Replace('\r', '\n');
         var matches = FeedbackBlockRegex().Matches(normalized);
-        var records = new List<FeedbackRecord>();
+        if (matches.Count == 0)
+        {
+            throw new InvalidOperationException("No readable feedback text found in the PDF.");
+        }
 
+        var items = new List<FeedbackItem>();
         foreach (Match match in matches)
         {
-            var id = match.Groups["id"].Value.Trim();
+            var feedbackId = match.Groups["id"].Value.Trim();
             var comment = match.Groups["comment"].Value.Trim();
-            if (!string.IsNullOrWhiteSpace(id) && !string.IsNullOrWhiteSpace(comment))
+
+            if (string.IsNullOrWhiteSpace(feedbackId))
             {
-                records.Add(new FeedbackRecord(id, comment));
+                throw new InvalidOperationException("A feedback item is missing its feedback ID.");
             }
+
+            if (string.IsNullOrWhiteSpace(comment))
+            {
+                throw new InvalidOperationException($"Feedback item '{feedbackId}' is missing its comment text.");
+            }
+
+            items.Add(new FeedbackItem(feedbackId, comment));
         }
 
-        if (records.Count > MaxFeedbackItems)
+        if (items.Count > MaxFeedbackItems)
         {
             throw new InvalidOperationException("The PDF contains more than 50 feedback items. Please upload a smaller batch.");
         }
 
-        return records;
+        return items;
     }
 
-    [GeneratedRegex(@"Feedback\s*ID\s*:\s*(?<id>[^\n]+)\n\s*Comment\s*:\s*(?<comment>.*?)(?=\n\s*Feedback\s*ID\s*:|\z)", RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled)]
+    [GeneratedRegex(@"Feedback[ \t]+ID[ \t]*:[ \t]*(?<id>[^\n]*)\n[ \t]*Comment[ \t]*:[ \t]*(?<comment>.*?)(?=\n[ \t]*Feedback[ \t]+ID[ \t]*:|\z)", RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled)]
     private static partial Regex FeedbackBlockRegex();
 }

@@ -19,6 +19,62 @@ namespace SentimentAnalysis.Tests;
 public sealed class JobApiTests
 {
     [Fact]
+    public void ParserExtractsValidFeedbackIdsAndComments()
+    {
+        var items = new FeedbackParser().Parse("""
+            Feedback ID: fb_001
+            Comment: Delivery was fast but packaging was damaged.
+
+            Feedback ID: fb_002
+            Comment: Support answered quickly.
+            """);
+
+        Assert.Equal(2, items.Count);
+        Assert.Equal("fb_001", items[0].FeedbackId);
+        Assert.Equal("Delivery was fast but packaging was damaged.", items[0].Comment);
+        Assert.Equal("fb_002", items[1].FeedbackId);
+        Assert.Equal("Support answered quickly.", items[1].Comment);
+    }
+
+    [Fact]
+    public void ParserSupportsMultilineComments()
+    {
+        var items = new FeedbackParser().Parse("""
+            Feedback ID: fb_multi
+            Comment: First line of the comment.
+            Second line with more detail.
+            Third line should stay with the same item.
+
+            Feedback ID: fb_next
+            Comment: Next item.
+            """);
+
+        Assert.Equal(2, items.Count);
+        Assert.Equal("fb_multi", items[0].FeedbackId);
+        Assert.Contains("Second line with more detail.", items[0].Comment);
+        Assert.Contains("Third line should stay with the same item.", items[0].Comment);
+        Assert.DoesNotContain("Feedback ID: fb_next", items[0].Comment);
+    }
+
+    [Fact]
+    public void ParserRejectsEmptyFeedbackText()
+    {
+        var error = Assert.Throws<InvalidOperationException>(() => new FeedbackParser().Parse("   "));
+
+        Assert.Equal("No readable feedback text found in the PDF.", error.Message);
+    }
+
+    [Fact]
+    public void ParserRejectsMoreThanFiftyFeedbackRecords()
+    {
+        var text = string.Join("\n\n", Enumerable.Range(1, 51).Select(i => $"Feedback ID: fb_{i:000}\nComment: Comment {i}"));
+
+        var error = Assert.Throws<InvalidOperationException>(() => new FeedbackParser().Parse(text));
+
+        Assert.Equal("The PDF contains more than 50 feedback items. Please upload a smaller batch.", error.Message);
+    }
+
+    [Fact]
     public async Task ValidPdfUploadCreatesQueuedJob()
     {
         await using var factory = new TestApplicationFactory();
@@ -63,7 +119,7 @@ public sealed class JobApiTests
     }
 
     [Fact]
-    public async Task EmptyMalformedPdfFailsGracefully()
+    public async Task EmptyNonReadablePdfMarksJobAsFailedWithClearError()
     {
         await using var factory = new TestApplicationFactory();
         var client = factory.CreateClient();
@@ -77,7 +133,7 @@ public sealed class JobApiTests
     }
 
     [Fact]
-    public async Task JobLifecycleCompletesWithMockedLlm()
+    public async Task MockLlmResultWithValidFeedbackIdsCompletesJob()
     {
         await using var factory = new TestApplicationFactory();
         var client = factory.CreateClient();
@@ -90,6 +146,42 @@ public sealed class JobApiTests
         var result = await client.GetFromJsonAsync<JobResultResponse>($"/jobs/{created.JobId}/result");
         Assert.Equal(created.JobId, result!.JobId);
         Assert.Contains("fb_life", result.TopThemes.Single().FeedbackIds);
+    }
+
+    [Fact]
+    public async Task WorkerSendsParsedFeedbackItemsToAnalyzerNotPdfBytes()
+    {
+        await using var factory = new TestApplicationFactory();
+        var client = factory.CreateClient();
+        var created = await CreateJobAsync(client, """
+            Feedback ID: fb_parsed
+            Comment: This comment should be sent without the surrounding PDF feedback labels.
+            Additional detail stays in the parsed comment.
+            """);
+
+        await factory.ProcessAllQueuedJobsAsync();
+
+        Assert.Equal(JobStatuses.Completed, (await client.GetFromJsonAsync<JobStatusResponse>($"/jobs/{created.JobId}"))!.Status);
+        var sent = Assert.Single(factory.Analyzer.ReceivedFeedbackBatches);
+        var item = Assert.Single(sent);
+        Assert.Equal("fb_parsed", item.FeedbackId);
+        Assert.Contains("Additional detail stays in the parsed comment.", item.Comment);
+        Assert.DoesNotContain("Feedback ID:", item.Comment);
+        Assert.DoesNotContain("Comment:", item.Comment);
+    }
+
+    [Fact]
+    public async Task MockLlmResultWithInvalidFeedbackIdsIsHandledSafely()
+    {
+        await using var factory = new TestApplicationFactory(analyzerReturnsInvalidFeedbackId: true);
+        var client = factory.CreateClient();
+        var created = await CreateJobAsync(client, SampleFeedback("fb_valid"));
+
+        await factory.ProcessAllQueuedJobsAsync();
+
+        var status = await client.GetFromJsonAsync<JobStatusResponse>($"/jobs/{created.JobId}");
+        Assert.Equal(JobStatuses.Failed, status!.Status);
+        Assert.Contains("not in the parsed input", status.ErrorMessage);
     }
 
     [Fact]
@@ -180,10 +272,12 @@ public sealed class JobApiTests
         """;
 }
 
-internal sealed class TestApplicationFactory(bool analyzerThrows = false) : WebApplicationFactory<Program>
+internal sealed class TestApplicationFactory(bool analyzerThrows = false, bool analyzerReturnsInvalidFeedbackId = false) : WebApplicationFactory<Program>
 {
     private readonly string databasePath = Path.Combine(Path.GetTempPath(), $"sentiment-tests-{Guid.NewGuid():N}.db");
     private readonly string uploadsPath = Path.Combine(Path.GetTempPath(), $"sentiment-uploads-{Guid.NewGuid():N}");
+
+    public FakeSentimentAnalyzer Analyzer { get; } = new(analyzerThrows, analyzerReturnsInvalidFeedbackId);
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -195,7 +289,7 @@ internal sealed class TestApplicationFactory(bool analyzerThrows = false) : WebA
             services.RemoveAll<IPdfTextExtractor>();
             services.RemoveAll<ISentimentAnalyzer>();
             services.AddScoped<IPdfTextExtractor, TextFilePdfExtractor>();
-            services.AddScoped<ISentimentAnalyzer>(_ => new FakeSentimentAnalyzer(analyzerThrows));
+            services.AddSingleton<ISentimentAnalyzer>(Analyzer);
         });
     }
 
@@ -277,18 +371,22 @@ internal sealed class TextFilePdfExtractor : IPdfTextExtractor
     }
 }
 
-internal sealed class FakeSentimentAnalyzer(bool throws) : ISentimentAnalyzer
+internal sealed class FakeSentimentAnalyzer(bool throws, bool returnsInvalidFeedbackId) : ISentimentAnalyzer
 {
-    public Task<SentimentAnalysisDto> AnalyzeAsync(IReadOnlyList<FeedbackRecord> feedback, CancellationToken cancellationToken)
+    public List<IReadOnlyList<FeedbackItem>> ReceivedFeedbackBatches { get; } = [];
+
+    public Task<SentimentAnalysisDto> AnalyzeAsync(IReadOnlyList<FeedbackItem> feedbackItems, CancellationToken cancellationToken)
     {
+        ReceivedFeedbackBatches.Add(feedbackItems.Select(x => new FeedbackItem(x.FeedbackId, x.Comment)).ToArray());
+
         if (throws)
         {
             throw new InvalidOperationException("Mock analyzer failure for test.");
         }
 
-        var ids = feedback.Select(x => x.FeedbackId).ToArray();
+        var ids = returnsInvalidFeedbackId ? new[] { "fb_not_from_input" } : feedbackItems.Select(x => x.FeedbackId).ToArray();
         return Task.FromResult(new SentimentAnalysisDto(
-            $"Analyzed {feedback.Count} feedback item(s).",
+            $"Analyzed {feedbackItems.Count} feedback item(s).",
             "mixed",
             [new ThemeDto("Speed vs support", "mixed", "Customers like speed but support may lag.", ids)],
             [new RecommendedActionDto("Improve support response time.")],
