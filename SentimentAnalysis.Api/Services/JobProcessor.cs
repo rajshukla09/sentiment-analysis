@@ -45,7 +45,7 @@ public sealed class JobProcessor(
             var text = await pdfTextExtractor.ExtractTextAsync(queuedJob.StoredFilePath, cancellationToken);
             var feedback = feedbackParser.Parse(text);
             var analysis = await sentimentAnalyzer.AnalyzeAsync(feedback, cancellationToken);
-            ValidateAnalysis(analysis, feedback);
+            ValidateAnalysisFeedbackIds(analysis, feedback);
             db.JobResults.Add(BuildResult(queuedJob.Id, analysis));
             await db.SaveChangesAsync(cancellationToken);
 
@@ -81,13 +81,8 @@ public sealed class JobProcessor(
         }
     }
 
-    private static void ValidateAnalysis(SentimentAnalysisDto analysis, IReadOnlyList<FeedbackItem> feedback)
+    private static void ValidateAnalysisFeedbackIds(SentimentAnalysisDto analysis, IReadOnlyList<FeedbackItem> feedback)
     {
-        if (analysis.TopThemes.Count is < 3 or > 7)
-        {
-            throw new InvalidOperationException("The analysis must include between 3 and 7 top themes.");
-        }
-
         var validIds = feedback.Select(x => x.FeedbackId).ToHashSet(StringComparer.Ordinal);
         var invalidIds = analysis.TopThemes
             .SelectMany(x => x.FeedbackIds)

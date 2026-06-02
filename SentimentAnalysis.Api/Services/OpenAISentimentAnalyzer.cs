@@ -56,8 +56,6 @@ public sealed class OpenAISentimentAnalyzer(HttpClient httpClient, IOptions<Open
                             topThemes = new
                             {
                                 type = "array",
-                                minItems = MinTopThemes,
-                                maxItems = MaxTopThemes,
                                 items = new
                                 {
                                     type = "object",
@@ -71,7 +69,6 @@ public sealed class OpenAISentimentAnalyzer(HttpClient httpClient, IOptions<Open
                                         feedbackIds = new
                                         {
                                             type = "array",
-                                            minItems = 1,
                                             items = new { type = "string" }
                                         }
                                     }
@@ -80,7 +77,6 @@ public sealed class OpenAISentimentAnalyzer(HttpClient httpClient, IOptions<Open
                             recommendedActions = new
                             {
                                 type = "array",
-                                minItems = 1,
                                 items = new { type = "string" }
                             },
                             uncertaintyNote = new { type = new[] { "string", "null" } }
@@ -127,10 +123,19 @@ public sealed class OpenAISentimentAnalyzer(HttpClient httpClient, IOptions<Open
             if (string.IsNullOrWhiteSpace(dto.OverallSummary)) throw new JsonException("overallSummary is required.");
             if (!AllowedSentiments.Contains(dto.OverallSentiment)) throw new JsonException("overallSentiment is invalid.");
             if (dto.TopThemes is null || dto.TopThemes.Count == 0) throw new JsonException("topThemes is required.");
-            if (dto.TopThemes.Count is < MinTopThemes or > MaxTopThemes) throw new JsonException($"topThemes must contain between {MinTopThemes} and {MaxTopThemes} items.");
             if (dto.RecommendedActions is null || dto.RecommendedActions.Count == 0) throw new JsonException("recommendedActions is required.");
 
-            var themes = dto.TopThemes.Select(t =>
+            var warnings = new List<string>();
+            if (dto.TopThemes.Count > MaxTopThemes)
+            {
+                warnings.Add($"The AI returned {dto.TopThemes.Count} themes, so only the first {MaxTopThemes} are shown.");
+            }
+            else if (dto.TopThemes.Count < MinTopThemes)
+            {
+                warnings.Add($"The AI returned only {dto.TopThemes.Count} theme(s), so the report shows the available themes instead of inventing extra evidence.");
+            }
+
+            var themes = dto.TopThemes.Take(MaxTopThemes).Select(t =>
             {
                 if (string.IsNullOrWhiteSpace(t.Theme) || string.IsNullOrWhiteSpace(t.Summary)) throw new JsonException("Each theme requires theme and summary.");
                 if (!AllowedSentiments.Contains(t.Sentiment)) throw new JsonException("Theme sentiment is invalid.");
@@ -154,12 +159,26 @@ public sealed class OpenAISentimentAnalyzer(HttpClient httpClient, IOptions<Open
             var actions = dto.RecommendedActions.Where(a => !string.IsNullOrWhiteSpace(a)).Select(a => new RecommendedActionDto(a.Trim())).ToArray();
             if (actions.Length == 0) throw new JsonException("recommendedActions cannot be empty.");
 
-            return new SentimentAnalysisDto(dto.OverallSummary.Trim(), dto.OverallSentiment, themes, actions, dto.UncertaintyNote?.Trim());
+            var uncertaintyNote = CombineUncertaintyNotes(dto.UncertaintyNote, warnings);
+
+            return new SentimentAnalysisDto(dto.OverallSummary.Trim(), dto.OverallSentiment, themes, actions, uncertaintyNote);
         }
         catch (JsonException ex)
         {
-            throw new InvalidOperationException($"OpenAI returned invalid JSON: {ex.Message}", ex);
+            throw new InvalidOperationException($"AI analysis response could not be used: {ex.Message}", ex);
         }
+    }
+
+    private static string? CombineUncertaintyNotes(string? uncertaintyNote, IReadOnlyList<string> warnings)
+    {
+        var notes = new List<string>();
+        if (!string.IsNullOrWhiteSpace(uncertaintyNote))
+        {
+            notes.Add(uncertaintyNote.Trim());
+        }
+
+        notes.AddRange(warnings);
+        return notes.Count == 0 ? null : string.Join(" ", notes);
     }
 
     private sealed class OpenAIAnalysisResponse

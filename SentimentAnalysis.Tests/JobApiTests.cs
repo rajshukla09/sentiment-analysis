@@ -98,30 +98,27 @@ public sealed class JobApiTests
         Assert.Equal("The PDF contains more than 50 feedback items. Please upload a smaller batch.", error.Message);
     }
 
-
-    [Theory]
-    [InlineData(2)]
-    [InlineData(8)]
-    public void OpenAIResponseWithThemeCountOutsideRequiredRangeIsRejected(int themeCount)
+    [Fact]
+    public void OpenAIResponseWithTooManyThemesIsCappedWithUncertaintyNote()
     {
-        var themesJson = string.Join(",\n", Enumerable.Range(1, themeCount).Select(i => $$"""
-                { "theme": "Theme {{i}}", "sentiment": "mixed", "summary": "Summary {{i}}", "feedbackIds": ["fb_001"] }
-            """));
-        var rawJson = $$"""
-            {
-              "overallSummary": "Summary",
-              "overallSentiment": "mixed",
-              "topThemes": [
-            {{themesJson}}
-              ],
-              "recommendedActions": ["Action"],
-              "uncertaintyNote": "Note"
-            }
-            """;
+        var rawJson = AnalysisJsonWithThemes(8);
 
-        var error = Assert.Throws<InvalidOperationException>(() => OpenAISentimentAnalyzer.ParseAndValidate(rawJson, ["fb_001"]));
+        var analysis = OpenAISentimentAnalyzer.ParseAndValidate(rawJson, ["fb_001"]);
 
-        Assert.Contains("topThemes must contain between 3 and 7 items", error.Message);
+        Assert.Equal(7, analysis.TopThemes.Count);
+        Assert.DoesNotContain(analysis.TopThemes, x => x.Theme == "Theme 8");
+        Assert.Contains("only the first 7 are shown", analysis.UncertaintyNote!);
+    }
+
+    [Fact]
+    public void OpenAIResponseWithFewerThanThreeThemesIsReturnedWithUncertaintyNote()
+    {
+        var rawJson = AnalysisJsonWithThemes(2);
+
+        var analysis = OpenAISentimentAnalyzer.ParseAndValidate(rawJson, ["fb_001"]);
+
+        Assert.Equal(2, analysis.TopThemes.Count);
+        Assert.Contains("shows the available themes instead of inventing extra evidence", analysis.UncertaintyNote!);
     }
 
     [Fact]
@@ -298,6 +295,25 @@ public sealed class JobApiTests
         var response = await client.GetAsync($"/jobs/{created.JobId}/result");
 
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+    }
+
+    private static string AnalysisJsonWithThemes(int themeCount)
+    {
+        var themesJson = string.Join(",\n", Enumerable.Range(1, themeCount).Select(i => $$"""
+                { "theme": "Theme {{i}}", "sentiment": "mixed", "summary": "Summary {{i}}", "feedbackIds": ["fb_001"] }
+            """));
+
+        return $$"""
+            {
+              "overallSummary": "Summary",
+              "overallSentiment": "mixed",
+              "topThemes": [
+            {{themesJson}}
+              ],
+              "recommendedActions": ["Action"],
+              "uncertaintyNote": "Note"
+            }
+            """;
     }
 
     private static async Task<CreateJobResponse> CreateJobAsync(HttpClient client, string text)
