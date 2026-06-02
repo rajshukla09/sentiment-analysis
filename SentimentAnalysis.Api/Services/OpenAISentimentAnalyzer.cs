@@ -10,6 +10,8 @@ namespace SentimentAnalysis.Api.Services;
 public sealed class OpenAISentimentAnalyzer(HttpClient httpClient, IOptions<OpenAIOptions> options, ILogger<OpenAISentimentAnalyzer> logger) : ISentimentAnalyzer
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private const int MinTopThemes = 3;
+    private const int MaxTopThemes = 7;
     private static readonly HashSet<string> AllowedSentiments = ["positive", "neutral", "mixed", "negative"];
 
     public async Task<SentimentAnalysisDto> AnalyzeAsync(IReadOnlyList<FeedbackItem> feedbackItems, CancellationToken cancellationToken)
@@ -35,13 +37,63 @@ public sealed class OpenAISentimentAnalyzer(HttpClient httpClient, IOptions<Open
         {
             model = "gpt-4o-mini",
             temperature = 0.1,
-            response_format = new { type = "json_object" },
+            response_format = new
+            {
+                type = "json_schema",
+                json_schema = new
+                {
+                    name = "consumer_sentiment_analysis",
+                    strict = true,
+                    schema = new
+                    {
+                        type = "object",
+                        additionalProperties = false,
+                        required = new[] { "overallSummary", "overallSentiment", "topThemes", "recommendedActions", "uncertaintyNote" },
+                        properties = new
+                        {
+                            overallSummary = new { type = "string" },
+                            overallSentiment = new { type = "string", @enum = new[] { "positive", "neutral", "mixed", "negative" } },
+                            topThemes = new
+                            {
+                                type = "array",
+                                minItems = MinTopThemes,
+                                maxItems = MaxTopThemes,
+                                items = new
+                                {
+                                    type = "object",
+                                    additionalProperties = false,
+                                    required = new[] { "theme", "sentiment", "summary", "feedbackIds" },
+                                    properties = new
+                                    {
+                                        theme = new { type = "string" },
+                                        sentiment = new { type = "string", @enum = new[] { "positive", "neutral", "mixed", "negative" } },
+                                        summary = new { type = "string" },
+                                        feedbackIds = new
+                                        {
+                                            type = "array",
+                                            minItems = 1,
+                                            items = new { type = "string" }
+                                        }
+                                    }
+                                }
+                            },
+                            recommendedActions = new
+                            {
+                                type = "array",
+                                minItems = 1,
+                                items = new { type = "string" }
+                            },
+                            uncertaintyNote = new { type = new[] { "string", "null" } }
+                        }
+                    }
+                }
+            },
             messages = new[]
             {
                 new
                 {
                     role = "user",
-                    content = "Return strict JSON only with shape {\"overallSummary\":string,\"overallSentiment\":\"positive|neutral|mixed|negative\",\"topThemes\":[{\"theme\":string,\"sentiment\":\"positive|neutral|mixed|negative\",\"summary\":string,\"feedbackIds\":[string]}],\"recommendedActions\":[string],\"uncertaintyNote\":string}. Use only the provided feedback items. Cite feedback IDs exactly from the input; do not invent IDs. Feedback items: " + compactFeedbackJson
+                    content = "Return strict JSON only with shape {\"overallSummary\":string,\"overallSentiment\":\"positive|neutral|mixed|negative\",\"topThemes\":[{\"theme\":string,\"sentiment\":\"positive|neutral|mixed|negative\",\"summary\":string,\"feedbackIds\":[string]}],\"recommendedActions\":[string],\"uncertaintyNote\":string}. topThemes must contain 3 to 7 broad themes total; combine similar feedback into the same theme instead of creating one theme per feedback item. Use only the provided feedback items. Cite feedback IDs exactly from the input; do not invent IDs. Feedback items: " + compactFeedbackJson
                 }
             }
         }, options: JsonOptions);
@@ -75,7 +127,7 @@ public sealed class OpenAISentimentAnalyzer(HttpClient httpClient, IOptions<Open
             if (string.IsNullOrWhiteSpace(dto.OverallSummary)) throw new JsonException("overallSummary is required.");
             if (!AllowedSentiments.Contains(dto.OverallSentiment)) throw new JsonException("overallSentiment is invalid.");
             if (dto.TopThemes is null || dto.TopThemes.Count == 0) throw new JsonException("topThemes is required.");
-            if (dto.TopThemes.Count > 7) throw new JsonException("topThemes cannot contain more than 7 items.");
+            if (dto.TopThemes.Count is < MinTopThemes or > MaxTopThemes) throw new JsonException($"topThemes must contain between {MinTopThemes} and {MaxTopThemes} items.");
             if (dto.RecommendedActions is null || dto.RecommendedActions.Count == 0) throw new JsonException("recommendedActions is required.");
 
             var themes = dto.TopThemes.Select(t =>

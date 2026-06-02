@@ -98,6 +98,32 @@ public sealed class JobApiTests
         Assert.Equal("The PDF contains more than 50 feedback items. Please upload a smaller batch.", error.Message);
     }
 
+
+    [Theory]
+    [InlineData(2)]
+    [InlineData(8)]
+    public void OpenAIResponseWithThemeCountOutsideRequiredRangeIsRejected(int themeCount)
+    {
+        var themesJson = string.Join(",\n", Enumerable.Range(1, themeCount).Select(i => $$"""
+                { "theme": "Theme {{i}}", "sentiment": "mixed", "summary": "Summary {{i}}", "feedbackIds": ["fb_001"] }
+            """));
+        var rawJson = $$"""
+            {
+              "overallSummary": "Summary",
+              "overallSentiment": "mixed",
+              "topThemes": [
+            {{themesJson}}
+              ],
+              "recommendedActions": ["Action"],
+              "uncertaintyNote": "Note"
+            }
+            """;
+
+        var error = Assert.Throws<InvalidOperationException>(() => OpenAISentimentAnalyzer.ParseAndValidate(rawJson, ["fb_001"]));
+
+        Assert.Contains("topThemes must contain between 3 and 7 items", error.Message);
+    }
+
     [Fact]
     public async Task ValidPdfUploadCreatesQueuedJob()
     {
@@ -169,7 +195,7 @@ public sealed class JobApiTests
         Assert.Equal(JobStatuses.Completed, status!.Status);
         var result = await client.GetFromJsonAsync<JobResultResponse>($"/jobs/{created.JobId}/result");
         Assert.Equal(created.JobId, result!.JobId);
-        Assert.Contains("fb_life", result.TopThemes.Single().FeedbackIds);
+        Assert.Contains("fb_life", result.TopThemes.First().FeedbackIds);
     }
 
     [Fact]
@@ -230,7 +256,7 @@ public sealed class JobApiTests
         var idsByJob = new HashSet<string>((await Task.WhenAll(created.Select(async j =>
         {
             var result = await client.GetFromJsonAsync<JobResultResponse>($"/jobs/{j.JobId}/result");
-            return result!.TopThemes.Single().FeedbackIds.Single();
+            return result!.TopThemes.First().FeedbackIds.Single();
         }))));
         Assert.Equal(3, idsByJob.Count);
     }
@@ -412,7 +438,11 @@ internal sealed class FakeSentimentAnalyzer(bool throws, bool returnsInvalidFeed
         return Task.FromResult(new SentimentAnalysisDto(
             $"Analyzed {feedbackItems.Count} feedback item(s).",
             "mixed",
-            [new ThemeDto("Speed vs support", "mixed", "Customers like speed but support may lag.", ids)],
+            [
+                new ThemeDto("Speed vs support", "mixed", "Customers like speed but support may lag.", ids),
+                new ThemeDto("Product experience", "positive", "Customers mention product or checkout experiences.", ids),
+                new ThemeDto("Follow-up opportunities", "neutral", "Feedback suggests places to improve the experience.", ids)
+            ],
             [new RecommendedActionDto("Improve support response time.")],
             "Mocked analysis for tests."));
     }
