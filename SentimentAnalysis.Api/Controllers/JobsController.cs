@@ -23,28 +23,89 @@ public sealed class JobsController(AppDbContext db, IFileStorageService storage)
     [Consumes("multipart/form-data")]
     [ProducesResponseType(typeof(CreateJobResponse), StatusCodes.Status202Accepted)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
-    public async Task<ActionResult<CreateJobResponse>> CreateJob(IFormFile? file, CancellationToken cancellationToken)
+    public async Task<ActionResult<CreateJobResponse>> CreateJob([FromForm(Name = "file")] IFormFile? file, CancellationToken cancellationToken)
+    {
+        var validationError = ValidateUpload(file);
+        if (validationError is not null)
+        {
+            return BadRequest(validationError);
+        }
+
+        var job = await BuildQueuedJobAsync(file!, cancellationToken);
+        db.Jobs.Add(job);
+        await db.SaveChangesAsync(cancellationToken);
+
+        return AcceptedAtAction(nameof(GetJob), new { id = job.Id }, new CreateJobResponse(job.Id, job.Status));
+    }
+
+    /// <summary>
+    /// Uploads multiple PDFs in one multipart request and queues one background analysis job per file.
+    /// </summary>
+    [HttpPost("batch")]
+    [Consumes("multipart/form-data")]
+    [ProducesResponseType(typeof(CreateJobsResponse), StatusCodes.Status202Accepted)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<CreateJobsResponse>> CreateJobs([FromForm(Name = "files")] List<IFormFile>? files, CancellationToken cancellationToken)
+    {
+        if (files is null || files.Count == 0)
+        {
+            return BadRequest(new ApiErrorResponse("At least one PDF file is required."));
+        }
+
+        if (files.Count > 10)
+        {
+            return BadRequest(new ApiErrorResponse("Upload 10 PDFs or fewer per batch."));
+        }
+
+        foreach (var file in files)
+        {
+            var validationError = ValidateUpload(file);
+            if (validationError is not null)
+            {
+                return BadRequest(validationError);
+            }
+        }
+
+        var jobs = new List<Job>(files.Count);
+        foreach (var file in files)
+        {
+            jobs.Add(await BuildQueuedJobAsync(file, cancellationToken));
+        }
+
+        db.Jobs.AddRange(jobs);
+        await db.SaveChangesAsync(cancellationToken);
+
+        return Accepted(new CreateJobsResponse(jobs.Select(x => new CreateJobItemResponse(x.Id, x.FileName, x.Status)).ToList()));
+    }
+
+    private static ApiErrorResponse? ValidateUpload(IFormFile? file)
     {
         if (file is null || file.Length == 0)
         {
-            return BadRequest(new ApiErrorResponse("A non-empty PDF file is required."));
+            return new ApiErrorResponse("A non-empty PDF file is required.");
         }
 
         var extension = Path.GetExtension(file.FileName);
         if (!string.Equals(extension, ".pdf", StringComparison.OrdinalIgnoreCase) ||
-            !string.Equals(file.ContentType, "application/pdf", StringComparison.OrdinalIgnoreCase))
+            (!string.IsNullOrWhiteSpace(file.ContentType) &&
+             !string.Equals(file.ContentType, "application/pdf", StringComparison.OrdinalIgnoreCase)))
         {
-            return BadRequest(new ApiErrorResponse("Only PDF uploads are accepted."));
+            return new ApiErrorResponse("Only PDF uploads are accepted.");
         }
 
         if (file.Length > MaxUploadBytes)
         {
-            return BadRequest(new ApiErrorResponse("PDF uploads must be 2 MB or smaller."));
+            return new ApiErrorResponse("PDF uploads must be 2 MB or smaller.");
         }
 
+        return null;
+    }
+
+    private async Task<Job> BuildQueuedJobAsync(IFormFile file, CancellationToken cancellationToken)
+    {
         var jobId = Guid.NewGuid();
         var saved = await storage.SaveUploadAsync(file, jobId, cancellationToken);
-        var job = new Job
+        return new Job
         {
             Id = jobId,
             FileName = saved.OriginalFileName,
@@ -52,11 +113,30 @@ public sealed class JobsController(AppDbContext db, IFileStorageService storage)
             Status = JobStatuses.Queued,
             CreatedAtUtc = DateTime.UtcNow
         };
+    }
 
-        db.Jobs.Add(job);
-        await db.SaveChangesAsync(cancellationToken);
+    /// <summary>
+    /// Lists recent analysis jobs so the client can show queued, processing, and processed uploads.
+    /// </summary>
+    [HttpGet]
+    [ProducesResponseType(typeof(IReadOnlyList<JobSummaryResponse>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<IReadOnlyList<JobSummaryResponse>>> ListJobs(CancellationToken cancellationToken)
+    {
+        var jobs = await db.Jobs
+            .AsNoTracking()
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .Take(50)
+            .Select(x => new JobSummaryResponse(
+                x.Id,
+                x.FileName,
+                x.Status,
+                x.CreatedAtUtc,
+                x.StartedAtUtc,
+                x.CompletedAtUtc,
+                x.ErrorMessage))
+            .ToListAsync(cancellationToken);
 
-        return AcceptedAtAction(nameof(GetJob), new { id = jobId }, new CreateJobResponse(jobId, job.Status));
+        return Ok(jobs);
     }
 
     /// <summary>
