@@ -69,6 +69,18 @@ public sealed class JobApiTests
     }
 
     [Fact]
+    public void ParserSupportsPdfExtractorTextWithMissingSeparatingWhitespace()
+    {
+        var items = new FeedbackParser().Parse("FeedbackID:fb_001Comment:The delivery was fast.FeedbackID:fb_002Comment:Support was quick.");
+
+        Assert.Equal(2, items.Count);
+        Assert.Equal("fb_001", items[0].FeedbackId);
+        Assert.Equal("The delivery was fast.", items[0].Comment);
+        Assert.Equal("fb_002", items[1].FeedbackId);
+        Assert.Equal("Support was quick.", items[1].Comment);
+    }
+
+    [Fact]
     public void ParserRejectsEmptyFeedbackText()
     {
         var error = Assert.Throws<InvalidOperationException>(() => new FeedbackParser().Parse("   "));

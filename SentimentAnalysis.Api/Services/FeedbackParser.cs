@@ -48,6 +48,6 @@ public sealed partial class FeedbackParser : IFeedbackParser
         return items;
     }
 
-    [GeneratedRegex(@"Feedback\s+ID\s*:\s*(?<id>.*?)\s+Comment\s*:\s*(?<comment>.*?)(?=\s+Feedback\s+ID\s*:|\z)", RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled)]
+    [GeneratedRegex(@"Feedback\s*ID\s*:\s*(?<id>.*?)\s*Comment\s*:\s*(?<comment>.*?)(?=\s*Feedback\s*ID\s*:|\z)", RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled)]
     private static partial Regex FeedbackBlockRegex();
 }
