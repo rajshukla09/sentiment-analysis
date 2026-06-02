@@ -166,6 +166,22 @@ public sealed class JobApiTests
     }
 
     [Fact]
+    public async Task ListJobsReturnsRecentFileStatuses()
+    {
+        await using var factory = new TestApplicationFactory();
+        var client = factory.CreateClient();
+
+        var first = await CreateJobAsync(client, SampleFeedback("fb_list_1"), "first.pdf");
+        var second = await CreateJobAsync(client, SampleFeedback("fb_list_2"), "second.pdf");
+
+        var jobs = await client.GetFromJsonAsync<List<JobSummaryResponse>>("/jobs");
+
+        Assert.NotNull(jobs);
+        Assert.Contains(jobs!, x => x.JobId == first.JobId && x.FileName == "first.pdf" && x.Status == JobStatuses.Queued);
+        Assert.Contains(jobs!, x => x.JobId == second.JobId && x.FileName == "second.pdf" && x.Status == JobStatuses.Queued);
+    }
+
+    [Fact]
     public async Task EmptyNonReadablePdfMarksJobAsFailedWithClearError()
     {
         await using var factory = new TestApplicationFactory();
@@ -316,19 +332,19 @@ public sealed class JobApiTests
             """;
     }
 
-    private static async Task<CreateJobResponse> CreateJobAsync(HttpClient client, string text)
+    private static async Task<CreateJobResponse> CreateJobAsync(HttpClient client, string text, string fileName = "feedback.pdf")
     {
-        var response = await client.PostAsync("/jobs", PdfForm(text));
+        var response = await client.PostAsync("/jobs", PdfForm(text, fileName));
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<CreateJobResponse>())!;
     }
 
-    private static MultipartFormDataContent PdfForm(string text)
+    private static MultipartFormDataContent PdfForm(string text, string fileName = "feedback.pdf")
     {
         var form = new MultipartFormDataContent();
         var content = new StringContent(text);
         content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/pdf");
-        form.Add(content, "file", "feedback.pdf");
+        form.Add(content, "file", fileName);
         return form;
     }
 

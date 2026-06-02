@@ -4,6 +4,15 @@ public sealed record FeedbackItem(string FeedbackId, string Comment);
 
 public sealed record CreateJobResponse(Guid JobId, string Status);
 
+public sealed record JobSummaryResponse(
+    Guid JobId,
+    string FileName,
+    string Status,
+    DateTime CreatedAtUtc,
+    DateTime? StartedAtUtc,
+    DateTime? CompletedAtUtc,
+    string? ErrorMessage);
+
 public sealed record JobStatusResponse(
     Guid JobId,
     string Status,
