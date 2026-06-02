@@ -4,7 +4,7 @@
     <h2>Find an existing job</h2>
     <EditForm Model="@searchForm" OnSubmit="Go">
         <div class="search-row">
-            <input value="@searchForm.JobId" @oninput="UpdateJobId" @onchange="UpdateJobId" placeholder="Paste job ID" />
+            <InputText @bind-Value="searchForm.JobId" @oninput="UpdateJobId" placeholder="Paste job ID" />
             <button type="submit">View Job</button>
         </div>
     </EditForm>
@@ -27,33 +27,55 @@
     private void Go()
     {
         var normalizedJobId = NormalizeJobId(searchForm.JobId);
-        searchForm.JobId = normalizedJobId;
-
-        if (!Guid.TryParse(normalizedJobId, out var id))
+        if (normalizedJobId is null)
         {
             error = "Enter a valid GUID job ID.";
             return;
         }
 
+        searchForm.JobId = normalizedJobId;
         error = null;
-        Navigation.NavigateTo($"jobs/{id}");
+        Navigation.NavigateTo($"jobs/{normalizedJobId}");
     }
 
-    private static string NormalizeJobId(string? value)
+    private static string? NormalizeJobId(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
         {
-            return string.Empty;
+            return null;
         }
 
-        return new string(value.Where(IsGuidCharacter).ToArray());
+        var compact = new string(value
+            .Select(NormalizeDash)
+            .Where(IsPotentialGuidCharacter)
+            .ToArray());
+
+        if (Guid.TryParse(compact, out var parsed))
+        {
+            return parsed.ToString("D");
+        }
+
+        var hexOnly = new string(compact.Where(Uri.IsHexDigit).ToArray());
+        for (var start = 0; start <= hexOnly.Length - 32; start++)
+        {
+            var candidate = hexOnly.Substring(start, 32);
+            if (Guid.TryParseExact(candidate, "N", out parsed))
+            {
+                return parsed.ToString("D");
+            }
+        }
+
+        return null;
     }
 
-    private static bool IsGuidCharacter(char value) =>
-        value is '-' or '{' or '}' ||
-        value is >= '0' and <= '9' ||
-        value is >= 'a' and <= 'f' ||
-        value is >= 'A' and <= 'F';
+    private static char NormalizeDash(char value) => value switch
+    {
+        '\u2010' or '\u2011' or '\u2012' or '\u2013' or '\u2014' or '\u2212' => '-',
+        _ => value
+    };
+
+    private static bool IsPotentialGuidCharacter(char value) =>
+        value is '-' or '{' or '}' or '(' or ')' || Uri.IsHexDigit(value);
 
     private sealed class SearchForm
     {
