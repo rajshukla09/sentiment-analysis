@@ -99,6 +99,29 @@ public sealed class JobApiTests
     }
 
     [Fact]
+    public void OpenAIResponseWithTooManyThemesIsCappedWithUncertaintyNote()
+    {
+        var rawJson = AnalysisJsonWithThemes(8);
+
+        var analysis = OpenAISentimentAnalyzer.ParseAndValidate(rawJson, ["fb_001"]);
+
+        Assert.Equal(7, analysis.TopThemes.Count);
+        Assert.DoesNotContain(analysis.TopThemes, x => x.Theme == "Theme 8");
+        Assert.Contains("only the first 7 are shown", analysis.UncertaintyNote!);
+    }
+
+    [Fact]
+    public void OpenAIResponseWithFewerThanThreeThemesIsReturnedWithUncertaintyNote()
+    {
+        var rawJson = AnalysisJsonWithThemes(2);
+
+        var analysis = OpenAISentimentAnalyzer.ParseAndValidate(rawJson, ["fb_001"]);
+
+        Assert.Equal(2, analysis.TopThemes.Count);
+        Assert.Contains("shows the available themes instead of inventing extra evidence", analysis.UncertaintyNote!);
+    }
+
+    [Fact]
     public async Task ValidPdfUploadCreatesQueuedJob()
     {
         await using var factory = new TestApplicationFactory();
@@ -169,7 +192,7 @@ public sealed class JobApiTests
         Assert.Equal(JobStatuses.Completed, status!.Status);
         var result = await client.GetFromJsonAsync<JobResultResponse>($"/jobs/{created.JobId}/result");
         Assert.Equal(created.JobId, result!.JobId);
-        Assert.Contains("fb_life", result.TopThemes.Single().FeedbackIds);
+        Assert.Contains("fb_life", result.TopThemes.First().FeedbackIds);
     }
 
     [Fact]
@@ -230,7 +253,7 @@ public sealed class JobApiTests
         var idsByJob = new HashSet<string>((await Task.WhenAll(created.Select(async j =>
         {
             var result = await client.GetFromJsonAsync<JobResultResponse>($"/jobs/{j.JobId}/result");
-            return result!.TopThemes.Single().FeedbackIds.Single();
+            return result!.TopThemes.First().FeedbackIds.Single();
         }))));
         Assert.Equal(3, idsByJob.Count);
     }
@@ -272,6 +295,25 @@ public sealed class JobApiTests
         var response = await client.GetAsync($"/jobs/{created.JobId}/result");
 
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+    }
+
+    private static string AnalysisJsonWithThemes(int themeCount)
+    {
+        var themesJson = string.Join(",\n", Enumerable.Range(1, themeCount).Select(i => $$"""
+                { "theme": "Theme {{i}}", "sentiment": "mixed", "summary": "Summary {{i}}", "feedbackIds": ["fb_001"] }
+            """));
+
+        return $$"""
+            {
+              "overallSummary": "Summary",
+              "overallSentiment": "mixed",
+              "topThemes": [
+            {{themesJson}}
+              ],
+              "recommendedActions": ["Action"],
+              "uncertaintyNote": "Note"
+            }
+            """;
     }
 
     private static async Task<CreateJobResponse> CreateJobAsync(HttpClient client, string text)
@@ -412,7 +454,11 @@ internal sealed class FakeSentimentAnalyzer(bool throws, bool returnsInvalidFeed
         return Task.FromResult(new SentimentAnalysisDto(
             $"Analyzed {feedbackItems.Count} feedback item(s).",
             "mixed",
-            [new ThemeDto("Speed vs support", "mixed", "Customers like speed but support may lag.", ids)],
+            [
+                new ThemeDto("Speed vs support", "mixed", "Customers like speed but support may lag.", ids),
+                new ThemeDto("Product experience", "positive", "Customers mention product or checkout experiences.", ids),
+                new ThemeDto("Follow-up opportunities", "neutral", "Feedback suggests places to improve the experience.", ids)
+            ],
             [new RecommendedActionDto("Improve support response time.")],
             "Mocked analysis for tests."));
     }
