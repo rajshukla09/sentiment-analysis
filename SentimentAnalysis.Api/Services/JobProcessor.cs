@@ -44,12 +44,8 @@ public sealed class JobProcessor(
         {
             var text = await pdfTextExtractor.ExtractTextAsync(queuedJob.StoredFilePath, cancellationToken);
             var feedback = feedbackParser.Parse(text);
-            if (feedback.Count == 0)
-            {
-                throw new InvalidOperationException("No readable feedback text found in the PDF.");
-            }
-
             var analysis = await sentimentAnalyzer.AnalyzeAsync(feedback, cancellationToken);
+            ValidateAnalysisFeedbackIds(analysis, feedback);
             db.JobResults.Add(BuildResult(queuedJob.Id, analysis));
             await db.SaveChangesAsync(cancellationToken);
 
@@ -82,6 +78,21 @@ public sealed class JobProcessor(
                     .SetProperty(x => x.ErrorMessage, errorMessage), CancellationToken.None);
 
             return true;
+        }
+    }
+
+    private static void ValidateAnalysisFeedbackIds(SentimentAnalysisDto analysis, IReadOnlyList<FeedbackItem> feedback)
+    {
+        var validIds = feedback.Select(x => x.FeedbackId).ToHashSet(StringComparer.Ordinal);
+        var invalidIds = analysis.TopThemes
+            .SelectMany(x => x.FeedbackIds)
+            .Where(id => !validIds.Contains(id))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        if (invalidIds.Length > 0)
+        {
+            throw new InvalidOperationException($"The analysis cited feedback IDs that were not in the parsed input: {string.Join(", ", invalidIds)}.");
         }
     }
 

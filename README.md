@@ -45,13 +45,12 @@ The API creates its SQLite database automatically on startup using `EnsureCreate
 
 ## Required environment variables
 
-The OpenAI key is never stored in the Blazor client and should never be committed.
+The OpenAI key is never stored in the Blazor client and should never be committed. The API uses `gpt-4o-mini` for analysis.
 
 For local API development, set:
 
 ```bash
 export OpenAI__ApiKey="sk-..."
-export OpenAI__Model="gpt-4o-mini"
 ```
 
 Optional local overrides:
@@ -155,6 +154,10 @@ Comments may span multiple lines until the next `Feedback ID:` marker. Scanned/i
 - The OpenAI prompt is compact and requests strict JSON only. The response is validated before the job is marked complete.
 - The result endpoint returns `202 Accepted` for queued/running jobs, `400 Bad Request` for failed jobs, and `404 Not Found` for missing jobs.
 
+## Why the PDF is parsed before calling the LLM
+
+The assignment provides a predictable feedback format, so the app extracts and parses feedback first, then sends only compact structured feedback records to the LLM. This reduces token usage, improves reliability, preserves feedback IDs for evidence, and makes the system easier to test and debug. The raw PDF is stored only as an input artifact for asynchronous processing and is not sent directly to the LLM.
+
 ## Why SQLite was used
 
 SQLite keeps deployment simple and free-tier friendly while still providing durable persistence for job state and results. EF Core SQLite is enough for this take-home workload and can persist under `/home/data` on Azure App Service. The schema can be migrated to a server database later without changing API contracts.
@@ -165,7 +168,6 @@ Configure these app settings in the Azure App Service backend:
 
 ```text
 OpenAI__ApiKey = actual key
-OpenAI__Model = gpt-4o-mini
 ConnectionStrings__DefaultConnection = Data Source=/home/data/consumer_sentiment.db
 Storage__UploadsPath = /home/data/uploads
 Cors__AllowedOrigins__0 = deployed Blazor client URL
