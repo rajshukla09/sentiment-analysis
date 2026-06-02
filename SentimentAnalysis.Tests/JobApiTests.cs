@@ -202,6 +202,24 @@ public sealed class JobApiTests
     }
 
     [Fact]
+    public async Task ListJobsHonorsTakeQueryParameter()
+    {
+        await using var factory = new TestApplicationFactory();
+        var client = factory.CreateClient();
+
+        await CreateJobAsync(client, SampleFeedback("fb_take_1"), "first.pdf");
+        await CreateJobAsync(client, SampleFeedback("fb_take_2"), "second.pdf");
+        await CreateJobAsync(client, SampleFeedback("fb_take_3"), "third.pdf");
+
+        var jobs = await client.GetFromJsonAsync<List<JobSummaryResponse>>("/jobs?take=2");
+
+        Assert.NotNull(jobs);
+        Assert.Equal(2, jobs!.Count);
+        Assert.Equal("third.pdf", jobs[0].FileName);
+        Assert.Equal("second.pdf", jobs[1].FileName);
+    }
+
+    [Fact]
     public async Task EmptyNonReadablePdfMarksJobAsFailedWithClearError()
     {
         await using var factory = new TestApplicationFactory();

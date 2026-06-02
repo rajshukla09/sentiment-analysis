@@ -169,7 +169,7 @@ Comments may span multiple lines until the next `Feedback ID:` marker. Scanned/i
 - Every job receives a unique GUID, a unique stored file path, and a single related result row, preventing overwrite or result mixing.
 - The OpenAI prompt is compact and requests strict JSON only. The response is validated before the job is marked complete.
 - The result endpoint returns `202 Accepted` for queued/running jobs, `400 Bad Request` for failed jobs, and `404 Not Found` for missing jobs.
-- The Blazor home page lets a user select multiple PDFs, sends them to `POST /jobs/batch` in one multipart request, creates one queued API job per PDF, and polls the recent job list so queued, processing, processed, and failed states stay visible.
+- The Blazor home page lets a user select multiple PDFs, sends them to `POST /jobs/batch` in one multipart request, creates one queued API job per PDF, and polls the recent job list so queued, running, completed, and failed states stay visible.
 
 ## Why the PDF is parsed before calling the LLM
 

@@ -1,5 +1,5 @@
-@page "/job"
-@page "/job/{JobId:guid}"
+@page "/jobs"
+@page "/jobs/{JobId:guid}"
 @implements IDisposable
 @inject HttpClient Http
 
@@ -21,12 +21,13 @@ else if (status is null)
 else
 {
     <section class="card">
-        <h2>@status.Status</h2>
+        <h2><span class="status-pill @status.Status">@FriendlyStatus(status.Status)</span></h2>
         <p><strong>Job ID:</strong> <code>@status.JobId</code></p>
         <p><strong>Created:</strong> @status.CreatedAtUtc.ToLocalTime()</p>
         @if (status.StartedAtUtc is not null) { <p><strong>Started:</strong> @status.StartedAtUtc.Value.ToLocalTime()</p> }
         @if (status.CompletedAtUtc is not null) { <p><strong>Finished:</strong> @status.CompletedAtUtc.Value.ToLocalTime()</p> }
-        @if (!string.IsNullOrWhiteSpace(status.ErrorMessage)) { <div class="alert error">@status.ErrorMessage</div> }
+        @if (status.Status == "failed" && !string.IsNullOrWhiteSpace(status.ErrorMessage)) { <div class="alert error"><strong>Error:</strong> @status.ErrorMessage</div> }
+        @if (status.Status is "queued" or "running") { <p class="note">This job is @FriendlyStatus(status.Status). The page will keep checking for updates.</p> }
     </section>
 
     @if (result is not null)
@@ -76,9 +77,9 @@ else
     protected override async Task OnParametersSetAsync()
     {
         await LoadAsync();
+        timer?.Dispose();
         if (JobId is not null && status?.Status is "queued" or "running")
         {
-            timer?.Dispose();
             timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
             _ = PollAsync();
         }
@@ -87,11 +88,18 @@ else
     private async Task PollAsync()
     {
         if (timer is null) return;
-        while (await timer.WaitForNextTickAsync(cts.Token))
+        try
         {
-            await LoadAsync();
-            await InvokeAsync(StateHasChanged);
-            if (status?.Status is "completed" or "failed") break;
+            while (await timer.WaitForNextTickAsync(cts.Token))
+            {
+                await LoadAsync();
+                await InvokeAsync(StateHasChanged);
+                if (status?.Status is "completed" or "failed") break;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Component was disposed.
         }
     }
 
@@ -106,12 +114,25 @@ else
             {
                 result = await Http.GetFromJsonAsync<JobResultResponse>($"jobs/{JobId}/result", cts.Token);
             }
+            else
+            {
+                result = null;
+            }
         }
         catch (Exception ex)
         {
             error = ex.Message;
         }
     }
+
+    private static string FriendlyStatus(string status) => status switch
+    {
+        "queued" => "Queued",
+        "running" => "Running",
+        "completed" => "Completed",
+        "failed" => "Failed",
+        _ => status
+    };
 
     public void Dispose()
     {
