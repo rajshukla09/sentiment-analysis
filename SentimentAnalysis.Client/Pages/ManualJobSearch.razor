@@ -4,7 +4,7 @@
     <h2>Find an existing job</h2>
     <EditForm Model="@searchForm" OnSubmit="Go">
         <div class="search-row">
-            <input @bind="searchForm.JobId" @bind:event="oninput" placeholder="Paste job ID" />
+            <input value="@searchForm.JobId" @oninput="UpdateJobId" @onchange="UpdateJobId" placeholder="Paste job ID" />
             <button type="submit">View Job</button>
         </div>
     </EditForm>
@@ -18,9 +18,18 @@
     private readonly SearchForm searchForm = new();
     private string? error;
 
+    private void UpdateJobId(ChangeEventArgs args)
+    {
+        searchForm.JobId = args.Value?.ToString();
+        error = null;
+    }
+
     private void Go()
     {
-        if (!Guid.TryParse(searchForm.JobId, out var id))
+        var normalizedJobId = NormalizeJobId(searchForm.JobId);
+        searchForm.JobId = normalizedJobId;
+
+        if (!Guid.TryParse(normalizedJobId, out var id))
         {
             error = "Enter a valid GUID job ID.";
             return;
@@ -29,6 +38,22 @@
         error = null;
         Navigation.NavigateTo($"jobs/{id}");
     }
+
+    private static string NormalizeJobId(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        return new string(value.Where(IsGuidCharacter).ToArray());
+    }
+
+    private static bool IsGuidCharacter(char value) =>
+        value is '-' or '{' or '}' ||
+        value is >= '0' and <= '9' ||
+        value is >= 'a' and <= 'f' ||
+        value is >= 'A' and <= 'F';
 
     private sealed class SearchForm
     {
