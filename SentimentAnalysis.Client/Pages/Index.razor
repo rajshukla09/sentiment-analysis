@@ -226,6 +226,12 @@
                     content.Dispose();
                 }
             }
+        }
+        catch (OperationCanceledException)
+        {
+            // Component was disposed.
+        }
+    }
 
             await LoadRecentJobsAsync();
         }

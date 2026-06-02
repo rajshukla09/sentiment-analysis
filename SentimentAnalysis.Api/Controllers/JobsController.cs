@@ -139,6 +139,31 @@ public sealed class JobsController(AppDbContext db, IFileStorageService storage)
         return Ok(jobs);
     }
 
+
+    /// <summary>
+    /// Lists recent analysis jobs so the client can show queued, processing, and processed uploads.
+    /// </summary>
+    [HttpGet]
+    [ProducesResponseType(typeof(IReadOnlyList<JobSummaryResponse>), StatusCodes.Status200OK)]
+    public async Task<ActionResult<IReadOnlyList<JobSummaryResponse>>> ListJobs(CancellationToken cancellationToken)
+    {
+        var jobs = await db.Jobs
+            .AsNoTracking()
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .Take(50)
+            .Select(x => new JobSummaryResponse(
+                x.Id,
+                x.FileName,
+                x.Status,
+                x.CreatedAtUtc,
+                x.StartedAtUtc,
+                x.CompletedAtUtc,
+                x.ErrorMessage))
+            .ToListAsync(cancellationToken);
+
+        return Ok(jobs);
+    }
+
     /// <summary>
     /// Gets the current status and timestamps for a queued analysis job.
     /// </summary>
