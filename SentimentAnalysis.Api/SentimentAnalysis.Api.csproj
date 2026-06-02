@@ -1,10 +1,11 @@
-<Project Sdk="Microsoft.NET.Sdk.Web">
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);1591</NoWarn>
+    <UserSecretsId>97c4c2d1-a473-40ad-89ec-903863f3adab</UserSecretsId>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.11" />
@@ -13,5 +14,8 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\SentimentAnalysis.Shared\SentimentAnalysis.Shared.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="App_Data\uploads\" />
   </ItemGroup>
 </Project>
