@@ -1,24 +1,117 @@
 @page "/"
+@implements IDisposable
 @inject HttpClient Http
 @inject NavigationManager Navigation
 
-<h1>Upload consumer feedback PDF</h1>
-<p class="lede">Upload a text-based PDF containing Feedback ID / Comment blocks. The API queues analysis immediately and processes it in the background.</p>
+<h1>Upload consumer feedback PDFs</h1>
+<p class="lede">Upload one or more text-based PDFs containing Feedback ID / Comment blocks. The API queues each analysis job immediately and processes it in the background.</p>
 
 <section class="card">
-    <InputFile OnChange="OnFileSelected" accept="application/pdf,.pdf" />
-    <button class="primary" @onclick="UploadAsync" disabled="@(selectedFile is null || isUploading)">@(isUploading ? "Uploading..." : "Create analysis job")</button>
+    <div class="upload-row">
+        <InputFile OnChange="OnFilesSelected" accept="application/pdf,.pdf" multiple />
+        <button type="button" class="primary" @onclick="UploadAsync" disabled="@(!selectedFiles.Any() || isUploading)">@(isUploading ? "Uploading..." : $"Create {selectedFiles.Count} analysis job{(selectedFiles.Count == 1 ? string.Empty : "s")}")</button>
+    </div>
+    <p class="note">You can upload up to @MaxFilesPerBatch PDFs at once. Each PDF must be @MaxUploadMb MB or smaller.</p>
+
+    @if (selectedFiles.Any())
+    {
+        <div class="selected-files">
+            <strong>Selected files</strong>
+            <ul>
+                @foreach (var file in selectedFiles)
+                {
+                    <li>@file.Name <span class="muted">(@FormatBytes(file.Size))</span></li>
+                }
+            </ul>
+        </div>
+    }
 
     @if (!string.IsNullOrWhiteSpace(error))
     {
         <div class="alert error">@error</div>
     }
 
-    @if (createdJobId is not null)
+    @if (uploads.Any())
     {
-        <div class="alert success">
-            Job created: <code>@createdJobId</code>
-            <button @onclick="ViewStatus">View status</button>
+        <div class="job-table-wrap">
+            <table class="job-table">
+                <thead>
+                    <tr>
+                        <th>File</th>
+                        <th>Status</th>
+                        <th>Job ID</th>
+                        <th>Updated</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var upload in uploads)
+                    {
+                        <tr>
+                            <td>@upload.FileName</td>
+                            <td><span class="status-pill @upload.Status">@FriendlyStatus(upload.Status)</span></td>
+                            <td>@if (upload.JobId is not null) { <code>@upload.JobId</code> } else { <span class="muted">Not created yet</span> }</td>
+                            <td>@upload.UpdatedAt.ToLocalTime()</td>
+                            <td>@if (upload.JobId is not null) { <button type="button" @onclick="() => ViewStatus(upload.JobId.Value)">View</button> }</td>
+                        </tr>
+                        @if (!string.IsNullOrWhiteSpace(upload.ErrorMessage))
+                        {
+                            <tr class="error-row"><td colspan="5">@upload.ErrorMessage</td></tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</section>
+
+<section class="card">
+    <div class="section-heading">
+        <div>
+            <h2>Recent jobs</h2>
+            <p class="note">Track which PDFs are queued, processing, processed, or failed.</p>
+        </div>
+        <button type="button" @onclick="LoadRecentJobsAsync" disabled="@isLoadingJobs">@(isLoadingJobs ? "Refreshing..." : "Refresh")</button>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(jobListError))
+    {
+        <div class="alert error">@jobListError</div>
+    }
+    else if (recentJobs.Count == 0)
+    {
+        <p class="muted">No jobs yet. Upload one or more PDFs to start.</p>
+    }
+    else
+    {
+        <div class="job-table-wrap">
+            <table class="job-table">
+                <thead>
+                    <tr>
+                        <th>File</th>
+                        <th>Status</th>
+                        <th>Created</th>
+                        <th>Finished</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var job in recentJobs)
+                    {
+                        <tr>
+                            <td>@job.FileName</td>
+                            <td><span class="status-pill @job.Status">@FriendlyStatus(job.Status)</span></td>
+                            <td>@job.CreatedAtUtc.ToLocalTime()</td>
+                            <td>@(job.CompletedAtUtc?.ToLocalTime().ToString() ?? "—")</td>
+                            <td><button type="button" @onclick="() => ViewStatus(job.JobId)">View</button></td>
+                        </tr>
+                        @if (!string.IsNullOrWhiteSpace(job.ErrorMessage))
+                        {
+                            <tr class="error-row"><td colspan="5">@job.ErrorMessage</td></tr>
+                        }
+                    }
+                </tbody>
+            </table>
         </div>
     }
 </section>
@@ -26,62 +119,219 @@
 <ManualJobSearch />
 
 @code {
-    private IBrowserFile? selectedFile;
+    private const int MaxFilesPerBatch = 10;
+    private const int MaxUploadMb = 2;
+    private const long MaxUploadBytes = MaxUploadMb * 1024 * 1024;
+
+    private readonly List<IBrowserFile> selectedFiles = [];
+    private readonly List<UploadRow> uploads = [];
+    private List<JobSummaryResponse> recentJobs = [];
     private bool isUploading;
+    private bool isLoadingJobs;
     private string? error;
-    private Guid? createdJobId;
+    private string? jobListError;
+    private PeriodicTimer? timer;
+    private CancellationTokenSource cts = new();
 
-    private void OnFileSelected(InputFileChangeEventArgs args)
+    protected override async Task OnInitializedAsync()
     {
-        error = null;
-        createdJobId = null;
-        selectedFile = args.File;
-        if (selectedFile.Size > 2 * 1024 * 1024)
-        {
-            error = "PDF uploads must be 2 MB or smaller.";
-            selectedFile = null;
-        }
+        await LoadRecentJobsAsync();
+        timer = new PeriodicTimer(TimeSpan.FromSeconds(3));
+        _ = PollAsync();
     }
 
-    private void ViewStatus()
+    private void OnFilesSelected(InputFileChangeEventArgs args)
     {
-        if (createdJobId is not null)
-        {
-            Navigation.NavigateTo($"job/{createdJobId}");
-        }
-    }
-
-    private async Task UploadAsync()
-    {
-        if (selectedFile is null) return;
-        isUploading = true;
         error = null;
-        createdJobId = null;
+        selectedFiles.Clear();
+
+        IReadOnlyList<IBrowserFile> files;
         try
         {
-            using var form = new MultipartFormDataContent();
-            await using var stream = selectedFile.OpenReadStream(2 * 1024 * 1024);
-            using var content = new StreamContent(stream);
-            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/pdf");
-            form.Add(content, "file", selectedFile.Name);
-            var response = await Http.PostAsync("jobs", form);
-            if (!response.IsSuccessStatusCode)
+            files = args.GetMultipleFiles(MaxFilesPerBatch);
+        }
+        catch (InvalidOperationException)
+        {
+            error = $"Select {MaxFilesPerBatch} PDFs or fewer per batch.";
+            return;
+        }
+
+        foreach (var file in files)
+        {
+            if (file.Size > MaxUploadBytes)
             {
-                var apiError = await response.Content.ReadFromJsonAsync<ApiErrorResponse>();
-                error = apiError?.Error ?? $"Upload failed with HTTP {(int)response.StatusCode}.";
+                error = $"{file.Name} is too large. PDF uploads must be {MaxUploadMb} MB or smaller.";
+                selectedFiles.Clear();
                 return;
             }
 
-            var created = await response.Content.ReadFromJsonAsync<CreateJobResponse>();
-            createdJobId = created?.JobId;
+            selectedFiles.Add(file);
+        }
+    }
+
+    private void ViewStatus(Guid jobId) => Navigation.NavigateTo($"job/{jobId}");
+
+    private async Task UploadAsync()
+    {
+        if (!selectedFiles.Any()) return;
+        isUploading = true;
+        error = null;
+
+        var batchRows = selectedFiles
+            .Select(file => new UploadRow(file.Name, "uploading", DateTime.UtcNow))
+            .ToList();
+        uploads.InsertRange(0, batchRows);
+
+        try
+        {
+            using var form = new MultipartFormDataContent();
+            var contents = new List<StreamContent>();
+            try
+            {
+                foreach (var file in selectedFiles)
+                {
+                    var stream = file.OpenReadStream(MaxUploadBytes);
+                    var content = new StreamContent(stream);
+                    content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/pdf");
+                    form.Add(content, "files", file.Name);
+                    contents.Add(content);
+                }
+
+                var response = await Http.PostAsync("jobs/batch", form, cts.Token);
+                if (!response.IsSuccessStatusCode)
+                {
+                    var apiError = await response.Content.ReadFromJsonAsync<ApiErrorResponse>(cancellationToken: cts.Token);
+                    MarkRowsFailed(batchRows, apiError?.Error ?? $"Upload failed with HTTP {(int)response.StatusCode}.");
+                    return;
+                }
+
+                var created = await response.Content.ReadFromJsonAsync<CreateJobsResponse>(cancellationToken: cts.Token);
+                if (created is null || created.Jobs.Count != batchRows.Count)
+                {
+                    MarkRowsFailed(batchRows, "The API returned an unexpected upload response.");
+                    return;
+                }
+
+                for (var i = 0; i < created.Jobs.Count; i++)
+                {
+                    batchRows[i].JobId = created.Jobs[i].JobId;
+                    batchRows[i].Status = created.Jobs[i].Status;
+                    batchRows[i].UpdatedAt = DateTime.UtcNow;
+                }
+            }
+            finally
+            {
+                foreach (var content in contents)
+                {
+                    content.Dispose();
+                }
+            }
+
+            await LoadRecentJobsAsync();
         }
         catch (Exception ex)
         {
-            error = ex.Message;
+            MarkRowsFailed(batchRows, ex.Message);
         }
         finally
         {
+            selectedFiles.Clear();
             isUploading = false;
         }
+    }
+
+    private static void MarkRowsFailed(IEnumerable<UploadRow> rows, string message)
+    {
+        foreach (var row in rows)
+        {
+            row.Status = "failed";
+            row.ErrorMessage = message;
+            row.UpdatedAt = DateTime.UtcNow;
+        }
+    }
+
+    private async Task PollAsync()
+    {
+        if (timer is null) return;
+        try
+        {
+            while (await timer.WaitForNextTickAsync(cts.Token))
+            {
+                await LoadRecentJobsAsync();
+                await RefreshUploadRowsAsync();
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Component was disposed.
+        }
+    }
+
+    private async Task LoadRecentJobsAsync()
+    {
+        isLoadingJobs = true;
+        jobListError = null;
+        try
+        {
+            recentJobs = await Http.GetFromJsonAsync<List<JobSummaryResponse>>("jobs", cts.Token) ?? [];
+        }
+        catch (Exception ex)
+        {
+            jobListError = ex.Message;
+        }
+        finally
+        {
+            isLoadingJobs = false;
+        }
+    }
+
+    private async Task RefreshUploadRowsAsync()
+    {
+        foreach (var upload in uploads.Where(x => x.JobId is not null && (x.Status is "queued" or "running")).ToArray())
+        {
+            try
+            {
+                var status = await Http.GetFromJsonAsync<JobStatusResponse>($"jobs/{upload.JobId}", cts.Token);
+                if (status is null) continue;
+                upload.Status = status.Status;
+                upload.ErrorMessage = status.ErrorMessage;
+                upload.UpdatedAt = status.CompletedAtUtc ?? status.StartedAtUtc ?? DateTime.UtcNow;
+            }
+            catch (Exception ex)
+            {
+                upload.ErrorMessage = ex.Message;
+            }
+        }
+    }
+
+    private static string FriendlyStatus(string status) => status switch
+    {
+        "uploading" => "Uploading",
+        "queued" => "Queued",
+        "running" => "Processing",
+        "completed" => "Processed",
+        "failed" => "Failed",
+        _ => status
+    };
+
+    private static string FormatBytes(long bytes) => bytes < 1024 * 1024
+        ? $"{bytes / 1024d:N1} KB"
+        : $"{bytes / (1024d * 1024d):N1} MB";
+
+    public void Dispose()
+    {
+        cts.Cancel();
+        cts.Dispose();
+        timer?.Dispose();
+    }
+
+    private sealed class UploadRow(string fileName, string status, DateTime updatedAt)
+    {
+        public string FileName { get; } = fileName;
+        public Guid? JobId { get; set; }
+        public string Status { get; set; } = status;
+        public string? ErrorMessage { get; set; }
+        public DateTime UpdatedAt { get; set; } = updatedAt;
     }
 }

@@ -18,7 +18,7 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("ClientCors", policy =>
     {
-        var origins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? ["http://localhost:5000", "http://localhost:5173", "https://localhost:5001", "https://localhost:7040"];
+        var origins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? ["http://localhost:5000", "http://localhost:5173", "https://localhost:5001", "https://localhost:7040", "https://localhost:51997", "http://localhost:51998"];
         policy.WithOrigins(origins).AllowAnyHeader().AllowAnyMethod();
     });
 });

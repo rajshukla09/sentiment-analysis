@@ -8,6 +8,8 @@ A take-home Consumer Sentiment AI application that accepts PDF files with consum
 Browser / GitHub Pages static site
   └── SentimentAnalysis.Client (Blazor WebAssembly)
         ├── POST /jobs multipart PDF
+        ├── POST /jobs/batch multipart PDFs in one request
+        ├── GET /jobs recent job list
         ├── GET /jobs/{id} polling
         └── GET /jobs/{id}/result when complete
 
@@ -79,11 +81,11 @@ Production fallback paths are used when `/home/data` exists:
 
 ## Run the Blazor client
 
-Set the API base URL in `SentimentAnalysis.Client/wwwroot/appsettings.json`:
+Set the API base URL in `SentimentAnalysis.Client/wwwroot/appsettings.json`. The checked-in local launch settings use the API at `https://localhost:51995` and the client at `https://localhost:51997` / `http://localhost:51998`:
 
 ```json
 {
-  "ApiBaseUrl": "https://localhost:7040"
+  "ApiBaseUrl": "https://localhost:51995"
 }
 ```
 
@@ -103,11 +105,25 @@ Tests avoid real OpenAI calls. They use a temporary SQLite database per test fac
 
 ## API examples
 
-Create a job:
+List recent jobs:
 
 ```bash
-curl -X POST https://localhost:7040/jobs \
+curl https://localhost:51995/jobs
+```
+
+Create one job:
+
+```bash
+curl -X POST https://localhost:51995/jobs \
   -F "file=@sample-feedback.pdf;type=application/pdf"
+```
+
+Create multiple jobs in one request:
+
+```bash
+curl -X POST https://localhost:51995/jobs/batch \
+  -F "files=@sample-feedback-1.pdf;type=application/pdf" \
+  -F "files=@sample-feedback-2.pdf;type=application/pdf"
 ```
 
 Response:
@@ -122,13 +138,13 @@ Response:
 Check status:
 
 ```bash
-curl https://localhost:7040/jobs/00000000-0000-0000-0000-000000000000
+curl https://localhost:51995/jobs/00000000-0000-0000-0000-000000000000
 ```
 
 Get result after completion:
 
 ```bash
-curl https://localhost:7040/jobs/00000000-0000-0000-0000-000000000000/result
+curl https://localhost:51995/jobs/00000000-0000-0000-0000-000000000000/result
 ```
 
 ## PDF format
@@ -153,6 +169,7 @@ Comments may span multiple lines until the next `Feedback ID:` marker. Scanned/i
 - Every job receives a unique GUID, a unique stored file path, and a single related result row, preventing overwrite or result mixing.
 - The OpenAI prompt is compact and requests strict JSON only. The response is validated before the job is marked complete.
 - The result endpoint returns `202 Accepted` for queued/running jobs, `400 Bad Request` for failed jobs, and `404 Not Found` for missing jobs.
+- The Blazor home page lets a user select multiple PDFs, sends them to `POST /jobs/batch` in one multipart request, creates one queued API job per PDF, and polls the recent job list so queued, processing, processed, and failed states stay visible.
 
 ## Why the PDF is parsed before calling the LLM
 

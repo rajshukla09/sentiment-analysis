@@ -4,7 +4,7 @@
     <h2>Find an existing job</h2>
     <div class="search-row">
         <input @bind="jobId" placeholder="Paste job ID" />
-        <button @onclick="Go">Open</button>
+        <button type="button" @onclick="Go">Open</button>
     </div>
     @if (!string.IsNullOrWhiteSpace(error))
     {
