@@ -7,7 +7,8 @@ A take-home Consumer Sentiment AI application that accepts PDF files with consum
 ```text
 Browser / GitHub Pages static site
   └── SentimentAnalysis.Client (Blazor WebAssembly)
-        ├── POST /jobs multipart PDF, one request per uploaded PDF
+        ├── POST /jobs multipart PDF
+        ├── POST /jobs/batch multipart PDFs in one request
         ├── GET /jobs recent job list
         ├── GET /jobs/{id} polling
         └── GET /jobs/{id}/result when complete
@@ -110,11 +111,19 @@ List recent jobs:
 curl https://localhost:51995/jobs
 ```
 
-Create a job:
+Create one job:
 
 ```bash
 curl -X POST https://localhost:51995/jobs \
   -F "file=@sample-feedback.pdf;type=application/pdf"
+```
+
+Create multiple jobs in one request:
+
+```bash
+curl -X POST https://localhost:51995/jobs/batch \
+  -F "files=@sample-feedback-1.pdf;type=application/pdf" \
+  -F "files=@sample-feedback-2.pdf;type=application/pdf"
 ```
 
 Response:
@@ -160,7 +169,7 @@ Comments may span multiple lines until the next `Feedback ID:` marker. Scanned/i
 - Every job receives a unique GUID, a unique stored file path, and a single related result row, preventing overwrite or result mixing.
 - The OpenAI prompt is compact and requests strict JSON only. The response is validated before the job is marked complete.
 - The result endpoint returns `202 Accepted` for queued/running jobs, `400 Bad Request` for failed jobs, and `404 Not Found` for missing jobs.
-- The Blazor home page lets a user select multiple PDFs, creates one queued API job per PDF, and polls the recent job list so queued, processing, processed, and failed states stay visible.
+- The Blazor home page lets a user select multiple PDFs, sends them to `POST /jobs/batch` in one multipart request, creates one queued API job per PDF, and polls the recent job list so queued, processing, processed, and failed states stay visible.
 
 ## Why the PDF is parsed before calling the LLM
 

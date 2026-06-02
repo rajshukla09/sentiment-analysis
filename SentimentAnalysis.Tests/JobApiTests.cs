@@ -166,6 +166,26 @@ public sealed class JobApiTests
     }
 
     [Fact]
+    public async Task BatchPdfUploadCreatesQueuedJobs()
+    {
+        await using var factory = new TestApplicationFactory();
+        var client = factory.CreateClient();
+
+        using var form = new MultipartFormDataContent();
+        AddPdf(form, SampleFeedback("fb_batch_1"), "batch-one.pdf", "files");
+        AddPdf(form, SampleFeedback("fb_batch_2"), "batch-two.pdf", "files");
+
+        var response = await client.PostAsync("/jobs/batch", form);
+
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var created = await response.Content.ReadFromJsonAsync<CreateJobsResponse>();
+        Assert.NotNull(created);
+        Assert.Equal(2, created!.Jobs.Count);
+        Assert.Contains(created.Jobs, x => x.FileName == "batch-one.pdf" && x.Status == JobStatuses.Queued);
+        Assert.Contains(created.Jobs, x => x.FileName == "batch-two.pdf" && x.Status == JobStatuses.Queued);
+    }
+
+    [Fact]
     public async Task ListJobsReturnsRecentFileStatuses()
     {
         await using var factory = new TestApplicationFactory();
@@ -342,10 +362,15 @@ public sealed class JobApiTests
     private static MultipartFormDataContent PdfForm(string text, string fileName = "feedback.pdf")
     {
         var form = new MultipartFormDataContent();
+        AddPdf(form, text, fileName, "file");
+        return form;
+    }
+
+    private static void AddPdf(MultipartFormDataContent form, string text, string fileName, string formName)
+    {
         var content = new StringContent(text);
         content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/pdf");
-        form.Add(content, "file", fileName);
-        return form;
+        form.Add(content, formName, fileName);
     }
 
     private static string SampleFeedback(string id = "fb_001") => $"""

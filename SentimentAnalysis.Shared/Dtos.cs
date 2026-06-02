@@ -4,6 +4,10 @@ public sealed record FeedbackItem(string FeedbackId, string Comment);
 
 public sealed record CreateJobResponse(Guid JobId, string Status);
 
+public sealed record CreateJobsResponse(IReadOnlyList<CreateJobItemResponse> Jobs);
+
+public sealed record CreateJobItemResponse(Guid JobId, string FileName, string Status);
+
 public sealed record JobSummaryResponse(
     Guid JobId,
     string FileName,
