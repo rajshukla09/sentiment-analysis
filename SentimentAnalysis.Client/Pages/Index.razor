@@ -7,10 +7,12 @@
 <p class="lede">Upload one or more text-based PDFs containing Feedback ID / Comment blocks. The API queues each analysis job immediately and processes it in the background.</p>
 
 <section class="card">
-    <div class="upload-row">
-        <InputFile OnChange="OnFilesSelected" accept="application/pdf,.pdf" multiple />
-        <button type="button" class="primary" @onclick="UploadAsync" disabled="@(!selectedFiles.Any() || isUploading)">@(isUploading ? "Uploading..." : $"Create {selectedFiles.Count} analysis job{(selectedFiles.Count == 1 ? string.Empty : "s")}")</button>
-    </div>
+    <EditForm Model="@uploadForm" OnSubmit="UploadAsync">
+        <div class="upload-row">
+            <InputFile OnChange="OnFilesSelected" accept="application/pdf,.pdf" multiple />
+            <button type="submit" class="primary" disabled="@(!selectedFiles.Any() || isUploading)">@(isUploading ? "Uploading..." : $"Create {selectedFiles.Count} analysis job{(selectedFiles.Count == 1 ? string.Empty : "s")}")</button>
+        </div>
+    </EditForm>
     <p class="note">You can upload up to @MaxFilesPerBatch PDFs at once. Each PDF must be @MaxUploadMb MB or smaller.</p>
 
     @if (selectedFiles.Any())
@@ -66,13 +68,13 @@
 </section>
 
 <section class="card">
-    <EditForm Model="@refreshJobsForm" OnSubmit="LoadRecentJobsAsync" class="section-heading">
+    <div class="section-heading">
         <div>
             <h2>Recent jobs</h2>
             <p class="note">Track which PDFs are queued, processing, processed, or failed.</p>
         </div>
-        <button type="submit" disabled="@isLoadingJobs">@(isLoadingJobs ? "Refreshing..." : "Refresh")</button>
-    </EditForm>
+        <button type="button" @onclick="LoadRecentJobsAsync" disabled="@isLoadingJobs">@(isLoadingJobs ? "Refreshing..." : "Refresh")</button>
+    </div>
 
     @if (!string.IsNullOrWhiteSpace(jobListError))
     {
